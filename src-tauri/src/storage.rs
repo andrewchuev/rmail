@@ -3,6 +3,8 @@ use std::{fs, path::Path, sync::Mutex};
 use rusqlite::{params, Connection};
 use serde::{Deserialize, Serialize};
 
+use crate::mail::InboxSnapshot;
+
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CreateAccountInput {
@@ -66,6 +68,25 @@ impl Database {
         Ok(accounts)
     }
 
+    pub fn get_account(&self, account_id: i64) -> Result<Account, String> {
+        let connection = self.connection.lock().map_err(|error| error.to_string())?;
+        connection
+            .query_row(
+                "SELECT id, email, display_name, imap_host, smtp_host FROM accounts WHERE id = ?1",
+                params![account_id],
+                |row| {
+                    Ok(Account {
+                        id: row.get(0)?,
+                        email: row.get(1)?,
+                        display_name: row.get(2)?,
+                        imap_host: row.get(3)?,
+                        smtp_host: row.get(4)?,
+                    })
+                },
+            )
+            .map_err(|_| "Account was not found.".to_string())
+    }
+
     pub fn create_account(&self, input: CreateAccountInput) -> Result<Account, String> {
         let input = validate_input(input)?;
         let connection = self.connection.lock().map_err(|error| error.to_string())?;
@@ -104,6 +125,53 @@ impl Database {
         Ok(())
     }
 
+    pub fn store_inbox_snapshot(
+        &self,
+        account_id: i64,
+        snapshot: &InboxSnapshot,
+    ) -> Result<(), String> {
+        let mut connection = self.connection.lock().map_err(|error| error.to_string())?;
+        let transaction = connection
+            .transaction()
+            .map_err(|error| error.to_string())?;
+
+        for mailbox in &snapshot.mailboxes {
+            transaction
+                .execute(
+                    "INSERT INTO mailboxes (account_id, path, synced_at)
+                     VALUES (?1, ?2, CURRENT_TIMESTAMP)
+                     ON CONFLICT(account_id, path) DO UPDATE SET synced_at = CURRENT_TIMESTAMP",
+                    params![account_id, mailbox.path],
+                )
+                .map_err(|error| error.to_string())?;
+        }
+
+        for message in &snapshot.messages {
+            transaction
+                .execute(
+                    "INSERT INTO messages (account_id, mailbox_path, uid, sender, subject, date, is_read, synced_at)
+                     VALUES (?1, 'INBOX', ?2, ?3, ?4, ?5, ?6, CURRENT_TIMESTAMP)
+                     ON CONFLICT(account_id, mailbox_path, uid) DO UPDATE SET
+                       sender = excluded.sender,
+                       subject = excluded.subject,
+                       date = excluded.date,
+                       is_read = excluded.is_read,
+                       synced_at = CURRENT_TIMESTAMP",
+                    params![
+                        account_id,
+                        message.uid,
+                        message.sender,
+                        message.subject,
+                        message.date,
+                        message.is_read
+                    ],
+                )
+                .map_err(|error| error.to_string())?;
+        }
+
+        transaction.commit().map_err(|error| error.to_string())
+    }
+
     fn initialize(&self) -> Result<(), String> {
         let connection = self.connection.lock().map_err(|error| error.to_string())?;
         connection
@@ -117,6 +185,23 @@ impl Database {
                      imap_host TEXT NOT NULL,
                      smtp_host TEXT NOT NULL,
                      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+                 );
+                 CREATE TABLE IF NOT EXISTS mailboxes (
+                     account_id INTEGER NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
+                     path TEXT NOT NULL,
+                     synced_at TEXT NOT NULL,
+                     PRIMARY KEY (account_id, path)
+                 );
+                 CREATE TABLE IF NOT EXISTS messages (
+                     account_id INTEGER NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
+                     mailbox_path TEXT NOT NULL,
+                     uid INTEGER NOT NULL,
+                     sender TEXT NOT NULL,
+                     subject TEXT NOT NULL,
+                     date TEXT NOT NULL,
+                     is_read INTEGER NOT NULL,
+                     synced_at TEXT NOT NULL,
+                     PRIMARY KEY (account_id, mailbox_path, uid)
                  );",
             )
             .map_err(|error| error.to_string())
@@ -156,6 +241,7 @@ fn validate_input(input: CreateAccountInput) -> Result<CreateAccountInput, Strin
 #[cfg(test)]
 mod tests {
     use super::{CreateAccountInput, Database};
+    use crate::mail::{InboxSnapshot, MailboxSnapshot, MessageSnapshot};
 
     #[test]
     fn persists_account_metadata_without_credentials() {
@@ -186,5 +272,42 @@ mod tests {
             .list_accounts()
             .expect("accounts should list")
             .is_empty());
+    }
+
+    #[test]
+    fn stores_synced_mailbox_metadata() {
+        let database = Database::in_memory().expect("database should initialize");
+        let account = database
+            .create_account(CreateAccountInput {
+                email: "hello@example.com".to_string(),
+                display_name: "RMail".to_string(),
+                imap_host: "imap.example.com".to_string(),
+                smtp_host: "smtp.example.com".to_string(),
+            })
+            .expect("account should be created");
+
+        database
+            .store_inbox_snapshot(
+                account.id,
+                &InboxSnapshot {
+                    mailboxes: vec![MailboxSnapshot {
+                        path: "INBOX".to_string(),
+                    }],
+                    messages: vec![MessageSnapshot {
+                        uid: 7,
+                        sender: "Sender".to_string(),
+                        subject: "Subject".to_string(),
+                        date: "Today".to_string(),
+                        is_read: false,
+                    }],
+                },
+            )
+            .expect("snapshot should persist");
+
+        let connection = database.connection.lock().expect("connection should lock");
+        let count: i64 = connection
+            .query_row("SELECT COUNT(*) FROM messages", [], |row| row.get(0))
+            .expect("messages should count");
+        assert_eq!(count, 1);
     }
 }

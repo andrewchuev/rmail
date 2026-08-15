@@ -1,12 +1,27 @@
 mod mail;
 mod storage;
 
-use mail::{test_connection, MailConnectionInput, MailConnectionStatus};
+use mail::{sync_inbox, test_connection, MailConnectionInput, MailConnectionStatus};
+use serde::{Deserialize, Serialize};
 use storage::{Account, CreateAccountInput, Database};
 use tauri::Manager;
 
 struct AppState {
     database: Database,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct SyncAccountInput {
+    account_id: i64,
+    password: String,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct SyncAccountStatus {
+    mailbox_count: usize,
+    message_count: usize,
 }
 
 #[tauri::command]
@@ -32,6 +47,30 @@ async fn test_mail_connection(input: MailConnectionInput) -> Result<MailConnecti
     test_connection(input).await
 }
 
+#[tauri::command]
+async fn sync_account(
+    input: SyncAccountInput,
+    state: tauri::State<'_, AppState>,
+) -> Result<SyncAccountStatus, String> {
+    let account = state.database.get_account(input.account_id)?;
+    let snapshot = sync_inbox(MailConnectionInput {
+        imap_host: account.imap_host,
+        imap_port: 993,
+        smtp_host: account.smtp_host,
+        smtp_port: 587,
+        username: account.email,
+        password: input.password,
+    })
+    .await?;
+    let status = SyncAccountStatus {
+        mailbox_count: snapshot.mailboxes.len(),
+        message_count: snapshot.messages.len(),
+    };
+    state.database.store_inbox_snapshot(account.id, &snapshot)?;
+
+    Ok(status)
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -50,7 +89,8 @@ pub fn run() {
             list_accounts,
             create_account,
             delete_account,
-            test_mail_connection
+            test_mail_connection,
+            sync_account
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

@@ -24,6 +24,11 @@ export type MailConnectionStatus = {
   smtpReady: boolean;
 };
 
+export type SyncAccountStatus = {
+  mailboxCount: number;
+  messageCount: number;
+};
+
 export async function listAccounts(): Promise<Account[]> {
   if (!isTauri()) {
     return [];
@@ -54,4 +59,10 @@ export async function testMailConnection(input: MailConnectionInput): Promise<Ma
   }
 
   return invoke<MailConnectionStatus>("test_mail_connection", { input });
+}
+
+export async function syncAccount(accountId: number, password: string): Promise<SyncAccountStatus> {
+  return invoke<SyncAccountStatus>("sync_account", {
+    input: { accountId, password },
+  });
 }

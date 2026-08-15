@@ -7,6 +7,7 @@ use serde::{Deserialize, Serialize};
 use tokio::{net::TcpStream, time::timeout};
 
 const CONNECTION_TIMEOUT: Duration = Duration::from_secs(15);
+const MESSAGE_SYNC_LIMIT: u32 = 50;
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -26,6 +27,29 @@ pub struct MailConnectionStatus {
     pub smtp_ready: bool,
 }
 
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MailboxSnapshot {
+    pub path: String,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MessageSnapshot {
+    pub uid: u32,
+    pub sender: String,
+    pub subject: String,
+    pub date: String,
+    pub is_read: bool,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct InboxSnapshot {
+    pub mailboxes: Vec<MailboxSnapshot>,
+    pub messages: Vec<MessageSnapshot>,
+}
+
 pub async fn test_connection(input: MailConnectionInput) -> Result<MailConnectionStatus, String> {
     let input = validate_input(input)?;
     let mailboxes = test_imap(&input).await?;
@@ -37,7 +61,73 @@ pub async fn test_connection(input: MailConnectionInput) -> Result<MailConnectio
     })
 }
 
+pub async fn sync_inbox(input: MailConnectionInput) -> Result<InboxSnapshot, String> {
+    let input = validate_input(input)?;
+    let mut session = connect_session(&input).await?;
+    let mailboxes = within_timeout(
+        session.list(None, Some("*")),
+        "Unable to list IMAP mailboxes.",
+    )
+    .await?
+    .try_collect::<Vec<_>>()
+    .await
+    .map_err(|_| "Unable to list IMAP mailboxes.".to_string())?
+    .into_iter()
+    .map(|mailbox| MailboxSnapshot {
+        path: mailbox.name().to_string(),
+    })
+    .collect();
+
+    let selected = within_timeout(session.select("INBOX"), "Unable to open the inbox.").await?;
+    let messages = if selected.exists == 0 {
+        Vec::new()
+    } else {
+        let start = selected
+            .exists
+            .saturating_sub(MESSAGE_SYNC_LIMIT - 1)
+            .max(1);
+        let sequence = format!("{start}:*");
+        within_timeout(
+            session.uid_fetch(sequence, "(UID FLAGS ENVELOPE RFC822.SIZE)"),
+            "Unable to fetch inbox messages.",
+        )
+        .await?
+        .try_collect::<Vec<_>>()
+        .await
+        .map_err(|_| "Unable to fetch inbox messages.".to_string())?
+        .into_iter()
+        .filter_map(snapshot_message)
+        .collect()
+    };
+
+    let _ = session.logout().await;
+    Ok(InboxSnapshot {
+        mailboxes,
+        messages,
+    })
+}
+
 async fn test_imap(input: &MailConnectionInput) -> Result<Vec<String>, String> {
+    let mut session = connect_session(input).await?;
+    let mailboxes = within_timeout(
+        session.list(None, Some("*")),
+        "Unable to list IMAP mailboxes.",
+    )
+    .await?
+    .try_collect::<Vec<_>>()
+    .await
+    .map_err(|_| "Unable to list IMAP mailboxes.".to_string())?
+    .into_iter()
+    .map(|mailbox| mailbox.name().to_string())
+    .collect();
+
+    let _ = session.logout().await;
+    Ok(mailboxes)
+}
+
+async fn connect_session(
+    input: &MailConnectionInput,
+) -> Result<async_imap::Session<async_native_tls::TlsStream<TcpStream>>, String> {
     let stream = within_timeout(
         TcpStream::connect((input.imap_host.as_str(), input.imap_port)),
         "IMAP server is unavailable.",
@@ -54,24 +144,65 @@ async fn test_imap(input: &MailConnectionInput) -> Result<Vec<String>, String> {
         .await?
         .ok_or_else(|| "IMAP server closed the connection.".to_string())?;
 
-    let mut session = client
+    client
         .login(&input.username, &input.password)
         .await
-        .map_err(|_| "Unable to authenticate with IMAP.".to_string())?;
-    let mailboxes = within_timeout(
-        session.list(None, Some("*")),
-        "Unable to list IMAP mailboxes.",
-    )
-    .await?
-    .try_collect::<Vec<_>>()
-    .await
-    .map_err(|_| "Unable to list IMAP mailboxes.".to_string())?
-    .into_iter()
-    .map(|mailbox| mailbox.name().to_string())
-    .collect();
+        .map_err(|_| "Unable to authenticate with IMAP.".to_string())
+}
 
-    let _ = session.logout().await;
-    Ok(mailboxes)
+fn snapshot_message(fetch: async_imap::types::Fetch) -> Option<MessageSnapshot> {
+    let envelope = fetch.envelope()?;
+    let uid = fetch.uid?;
+    let sender = envelope
+        .from
+        .as_ref()
+        .and_then(|addresses| addresses.first())
+        .map(format_address)
+        .unwrap_or_else(|| "Unknown sender".to_string());
+
+    Some(MessageSnapshot {
+        uid,
+        sender,
+        subject: envelope
+            .subject
+            .as_deref()
+            .map(decode_header)
+            .unwrap_or_else(|| "(No subject)".to_string()),
+        date: envelope
+            .date
+            .as_deref()
+            .map(decode_header)
+            .unwrap_or_default(),
+        is_read: fetch
+            .flags()
+            .any(|flag| matches!(flag, async_imap::types::Flag::Seen)),
+    })
+}
+
+fn format_address(address: &async_imap::imap_proto::types::Address<'_>) -> String {
+    if let Some(name) = address.name.as_deref() {
+        return decode_header(name);
+    }
+
+    let mailbox = address
+        .mailbox
+        .as_deref()
+        .map(decode_header)
+        .unwrap_or_default();
+    let host = address
+        .host
+        .as_deref()
+        .map(decode_header)
+        .unwrap_or_default();
+    match (mailbox.is_empty(), host.is_empty()) {
+        (false, false) => format!("{mailbox}@{host}"),
+        (false, true) => mailbox,
+        _ => "Unknown sender".to_string(),
+    }
+}
+
+fn decode_header(value: &[u8]) -> String {
+    String::from_utf8_lossy(value).trim().to_string()
 }
 
 async fn test_smtp(input: &MailConnectionInput) -> Result<bool, String> {

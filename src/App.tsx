@@ -31,6 +31,7 @@ import {
   createAccount,
   deleteAccount,
   listAccounts,
+  syncAccount,
   testMailConnection,
   type Account,
   type CreateAccountInput,
@@ -126,7 +127,7 @@ function IconButton({
   );
 }
 
-function AccountSetup({ onAccountCreated }: { onAccountCreated: (account: Account) => void }) {
+function AccountSetup({ onAccountCreated }: { onAccountCreated: (account: Account, password: string) => Promise<void> }) {
   const [input, setInput] = useState<CreateAccountInput>({
     displayName: "",
     email: "",
@@ -203,7 +204,7 @@ function AccountSetup({ onAccountCreated }: { onAccountCreated: (account: Accoun
         throw new Error("Не удалось сохранить данные для входа. Аккаунт не был добавлен.");
       }
 
-      onAccountCreated(account);
+      await onAccountCreated(account, connectionPassword);
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "Unable to save the account.");
     } finally {
@@ -294,6 +295,7 @@ function App() {
   const [selectedId, setSelectedId] = useState(messages[0].id);
   const [query, setQuery] = useState("");
   const [isComposeOpen, setComposeOpen] = useState(false);
+  const [syncMessage, setSyncMessage] = useState("Откройте хранилище, чтобы синхронизировать почту");
 
   const visibleMessages = useMemo(() => {
     const normalizedQuery = query.trim().toLowerCase();
@@ -328,7 +330,20 @@ function App() {
   }
 
   if (accounts.length === 0) {
-    return <AccountSetup onAccountCreated={(account) => setAccounts([account])} />;
+    return (
+      <AccountSetup
+        onAccountCreated={async (account, password) => {
+          setAccounts([account]);
+
+          try {
+            const status = await syncAccount(account.id, password);
+            setSyncMessage(`Синхронизировано: папок — ${status.mailboxCount}, писем — ${status.messageCount}`);
+          } catch {
+            setSyncMessage("Аккаунт сохранён, но первая синхронизация не удалась");
+          }
+        }}
+      />
+    );
   }
 
   return (
@@ -375,9 +390,9 @@ function App() {
               <div className="mt-auto rounded-lg border bg-background/70 p-3 text-xs text-muted-foreground">
                 <div className="mb-2 flex items-center gap-2 font-medium text-foreground">
                   <span className="size-2 rounded-full bg-emerald-500" />
-                  Синхронизация готова
+                  {syncMessage.startsWith("Синхронизировано") ? "Синхронизация завершена" : "Синхронизация ожидает"}
                 </div>
-                Обновлено только что
+                {syncMessage}
               </div>
             </aside>
           </ResizablePanel>
