@@ -707,9 +707,14 @@ function App() {
                   RMail
                   <ChevronDown className="size-3.5 text-muted-foreground" />
                 </button>
-                <IconButton label="Add account" onClick={() => setAddingAccount(true)}>
-                  <Plus />
-                </IconButton>
+                <div className="flex gap-1">
+                  <IconButton label="Settings" onClick={() => setActiveView("settings")}>
+                    <Settings />
+                  </IconButton>
+                  <IconButton label="Add account" onClick={() => setAddingAccount(true)}>
+                    <Plus />
+                  </IconButton>
+                </div>
               </div>
 
               <Button className="mt-6 w-full justify-start" onClick={openCompose}>
@@ -763,10 +768,6 @@ function App() {
                 ))}
               </nav>
 
-              <Button className="mt-4 w-full justify-start" onClick={() => setActiveView("settings")} variant="ghost">
-                <Settings />
-                Settings
-              </Button>
 
               <div className="mt-auto min-h-20 rounded-lg border bg-background/70 p-3 text-xs text-muted-foreground">
                 <div className="mb-2 flex items-center gap-2 font-medium text-foreground">
