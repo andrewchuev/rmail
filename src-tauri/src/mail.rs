@@ -17,6 +17,7 @@ const MESSAGE_SYNC_LIMIT: u32 = 50;
 const MESSAGE_BODY_CHARACTER_LIMIT: usize = 200_000;
 const MESSAGE_SOURCE_BYTE_LIMIT: u64 = 25 * 1024 * 1024;
 
+/// Represents the credentials and server details required to connect to IMAP and SMTP servers.
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct MailConnectionInput {
@@ -49,6 +50,7 @@ impl async_imap::Authenticator for XOAuth2 {
     }
 }
 
+/// The result of a mail connection test, detailing available mailboxes and SMTP readiness.
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct MailConnectionStatus {
@@ -56,6 +58,7 @@ pub struct MailConnectionStatus {
     pub smtp_ready: bool,
 }
 
+/// A snapshot of a mailbox's state, primarily used for synchronization checks.
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct MailboxSnapshot {
@@ -63,6 +66,7 @@ pub struct MailboxSnapshot {
     pub uid_validity: Option<u32>,
 }
 
+/// A lightweight summary of an email message, suitable for displaying in a list view.
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct MessageSnapshot {
@@ -75,6 +79,7 @@ pub struct MessageSnapshot {
     pub is_read: bool,
 }
 
+/// A combined view of mailboxes and their contained messages for an account.
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct InboxSnapshot {
