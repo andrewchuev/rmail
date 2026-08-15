@@ -11,6 +11,7 @@ import {
 import { readCredential, saveCredentials } from "@/lib/credentials";
 import type { BackgroundSettings } from "@/lib/settings";
 import { connectionErrorMessage } from "@/lib/errors";
+import { ThemeSwitcher } from "./ThemeSwitcher";
 
 type SettingsPageProps = {
   accounts: Account[];
@@ -29,6 +30,12 @@ type SearchEntry = {
 };
 
 const generalEntries: SearchEntry[] = [
+  {
+    id: "appearance-theme",
+    title: "Appearance & Theme",
+    description: "Customize the application colors and light/dark mode.",
+    keywords: "general settings appearance theme light dark mode color preset UI",
+  },
   {
     id: "background-enabled",
     title: "Background email checks",
@@ -315,6 +322,11 @@ export function SettingsPage({
               <p className="mt-1 text-sm text-muted-foreground">Background activity and system notifications.</p>
             </div>
             <div className="divide-y overflow-hidden rounded-xl border bg-card">
+              {matchedIds.has("appearance-theme") ? (
+                <div id="appearance-theme">
+                  <ThemeSwitcher />
+                </div>
+              ) : null}
               {matchedIds.has("background-enabled") ? (
                 <label className="flex items-center gap-4 p-5" id="background-enabled">
                   <span className="grid size-10 shrink-0 place-items-center rounded-lg bg-primary/10 text-primary"><Mail className="size-5" /></span>
