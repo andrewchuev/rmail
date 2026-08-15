@@ -43,6 +43,7 @@ pub struct MailboxSnapshot {
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct MessageSnapshot {
+    pub mailbox_path: String,
     pub uid: u32,
     pub sender: String,
     pub subject: String,
@@ -123,7 +124,7 @@ fn imap_failure_code(message: &str) -> &'static str {
     }
 }
 
-pub async fn sync_inbox(input: MailConnectionInput) -> Result<InboxSnapshot, String> {
+pub async fn sync_mailboxes(input: MailConnectionInput) -> Result<InboxSnapshot, String> {
     let input = validate_input(input)?;
     let mut session = connect_session(&input).await?;
     let mailboxes = within_timeout(
@@ -135,38 +136,60 @@ pub async fn sync_inbox(input: MailConnectionInput) -> Result<InboxSnapshot, Str
     .await
     .map_err(|_| "Unable to list IMAP mailboxes.".to_string())?
     .into_iter()
+    .filter(|mailbox| {
+        !mailbox
+            .attributes()
+            .iter()
+            .any(|attribute| matches!(attribute, async_imap::types::NameAttribute::NoSelect))
+    })
     .map(|mailbox| MailboxSnapshot {
         path: mailbox.name().to_string(),
     })
-    .collect();
+    .collect::<Vec<_>>();
+    let mut messages = Vec::new();
 
-    let selected = within_timeout(session.select("INBOX"), "Unable to open the inbox.").await?;
-    let messages = if selected.exists == 0 {
-        Vec::new()
-    } else {
-        let start = selected
-            .exists
-            .saturating_sub(MESSAGE_SYNC_LIMIT - 1)
-            .max(1);
-        let sequence = format!("{start}:*");
-        within_timeout(
-            session.uid_fetch(sequence, "(UID FLAGS ENVELOPE RFC822.SIZE)"),
-            "Unable to fetch inbox messages.",
-        )
-        .await?
-        .try_collect::<Vec<_>>()
-        .await
-        .map_err(|_| "Unable to fetch inbox messages.".to_string())?
-        .into_iter()
-        .filter_map(snapshot_message)
-        .collect()
-    };
+    for mailbox in &mailboxes {
+        match sync_mailbox_headers(&mut session, &mailbox.path).await {
+            Ok(mut snapshot) => messages.append(&mut snapshot),
+            Err(_) => tauri_plugin_log::log::warn!("mail_sync skipped_mailbox_headers"),
+        }
+    }
 
     let _ = session.logout().await;
     Ok(InboxSnapshot {
         mailboxes,
         messages,
     })
+}
+
+async fn sync_mailbox_headers(
+    session: &mut async_imap::Session<async_native_tls::TlsStream<TcpStream>>,
+    mailbox_path: &str,
+) -> Result<Vec<MessageSnapshot>, String> {
+    let selected =
+        within_timeout(session.select(mailbox_path), "Unable to open a mailbox.").await?;
+    if selected.exists == 0 {
+        return Ok(Vec::new());
+    }
+
+    let start = selected
+        .exists
+        .saturating_sub(MESSAGE_SYNC_LIMIT - 1)
+        .max(1);
+    let sequence = format!("{start}:*");
+    let messages = within_timeout(
+        session.uid_fetch(sequence, "(UID FLAGS ENVELOPE RFC822.SIZE)"),
+        "Unable to fetch mailbox messages.",
+    )
+    .await?
+    .try_collect::<Vec<_>>()
+    .await
+    .map_err(|_| "Unable to fetch mailbox messages.".to_string())?
+    .into_iter()
+    .filter_map(|fetch| snapshot_message(mailbox_path, fetch))
+    .collect::<Vec<_>>();
+
+    Ok(messages)
 }
 
 pub async fn fetch_message_text(
@@ -303,7 +326,10 @@ async fn connect_session(
         .map_err(|_| "Unable to authenticate with IMAP.".to_string())
 }
 
-fn snapshot_message(fetch: async_imap::types::Fetch) -> Option<MessageSnapshot> {
+fn snapshot_message(
+    mailbox_path: &str,
+    fetch: async_imap::types::Fetch,
+) -> Option<MessageSnapshot> {
     let envelope = fetch.envelope()?;
     let uid = fetch.uid?;
     let sender = envelope
@@ -314,6 +340,7 @@ fn snapshot_message(fetch: async_imap::types::Fetch) -> Option<MessageSnapshot> 
         .unwrap_or_else(|| "Unknown sender".to_string());
 
     Some(MessageSnapshot {
+        mailbox_path: mailbox_path.to_string(),
         uid,
         sender,
         subject: envelope

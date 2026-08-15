@@ -428,7 +428,7 @@ impl Database {
             transaction
                 .execute(
                     "INSERT INTO messages (account_id, mailbox_path, uid, sender, subject, date, is_read, synced_at)
-                     VALUES (?1, 'INBOX', ?2, ?3, ?4, ?5, ?6, CURRENT_TIMESTAMP)
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, CURRENT_TIMESTAMP)
                      ON CONFLICT(account_id, mailbox_path, uid) DO UPDATE SET
                        sender = excluded.sender,
                        subject = excluded.subject,
@@ -437,6 +437,7 @@ impl Database {
                        synced_at = CURRENT_TIMESTAMP",
                     params![
                         account_id,
+                        message.mailbox_path,
                         message.uid,
                         message.sender,
                         message.subject,
@@ -624,10 +625,16 @@ mod tests {
             .store_inbox_snapshot(
                 account.id,
                 &InboxSnapshot {
-                    mailboxes: vec![MailboxSnapshot {
-                        path: "INBOX".to_string(),
-                    }],
+                    mailboxes: vec![
+                        MailboxSnapshot {
+                            path: "INBOX".to_string(),
+                        },
+                        MailboxSnapshot {
+                            path: "Sent".to_string(),
+                        },
+                    ],
                     messages: vec![MessageSnapshot {
+                        mailbox_path: "Sent".to_string(),
                         uid: 7,
                         sender: "Sender".to_string(),
                         subject: "Subject".to_string(),
@@ -640,7 +647,7 @@ mod tests {
         database
             .store_message_body(
                 account.id,
-                "INBOX",
+                "Sent",
                 7,
                 &MessageBody {
                     text: "Cached body".to_string(),
@@ -651,7 +658,7 @@ mod tests {
             .expect("body should persist");
         assert_eq!(
             database
-                .get_cached_message_body(account.id, "INBOX", 7)
+                .get_cached_message_body(account.id, "Sent", 7)
                 .expect("body should load"),
             Some(MessageBody {
                 text: "Cached body".to_string(),
@@ -672,6 +679,13 @@ mod tests {
                 .list_cached_mailboxes(account.id)
                 .expect("mailboxes should list")[0]
                 .unread_count,
+            0
+        );
+        assert_eq!(
+            database
+                .list_cached_messages(account.id, "Sent")
+                .expect("sent messages should list")
+                .len(),
             1
         );
     }

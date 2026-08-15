@@ -2,7 +2,7 @@ mod mail;
 mod storage;
 
 use mail::{
-    fetch_message_text, save_attachment, send_outgoing_message, sync_inbox, test_connection,
+    fetch_message_text, save_attachment, send_outgoing_message, sync_mailboxes, test_connection,
     MailConnectionInput, MailConnectionStatus, MessageBody, OutgoingMessageInput,
 };
 use serde::{Deserialize, Serialize};
@@ -212,7 +212,7 @@ async fn sync_account(
     state: tauri::State<'_, AppState>,
 ) -> Result<SyncAccountStatus, String> {
     let account = state.database.get_account(input.account_id)?;
-    let snapshot = sync_inbox(MailConnectionInput {
+    let snapshot = sync_mailboxes(MailConnectionInput {
         imap_host: account.imap_host,
         imap_port: 993,
         smtp_host: account.smtp_host,
