@@ -115,6 +115,8 @@ function App() {
   const [mailboxes, setMailboxes] = useState<CachedMailbox[]>([]);
   const [cachedMessages, setCachedMessages] = useState<CachedMessage[]>([]);
   const [layoutMode, setLayoutMode] = useState<"default" | "compact">("default");
+  const layoutModeRef = useRef(layoutMode);
+  layoutModeRef.current = layoutMode;
   const [activeAccountId, setActiveAccountId] = useState<number | null>(null);
   const [activeFolder, setActiveFolder] = useState("INBOX");
   const [selectedMessageKey, setSelectedMessageKey] = useState<string | null>(null);
@@ -302,7 +304,7 @@ function App() {
           setCachedMessages((current) => cachedMessagesEqual(current, items) ? current : items);
           setSelectedMessageKey((current) => current && items.some((message) => messageKey(message) === current)
             ? current
-            : (layoutMode === "default" && items[0] ? messageKey(items[0]) : null));
+            : (layoutModeRef.current === "default" && items[0] ? messageKey(items[0]) : null));
         });
       })
       .catch(() => {
@@ -314,7 +316,7 @@ function App() {
     return () => {
       ignore = true;
     };
-  }, [accounts, activeAccountId, activeFolder, syncRevision, layoutMode]);
+  }, [accounts, activeAccountId, activeFolder, syncRevision]);
 
   useEffect(() => {
     const message = selectedMessage;
@@ -830,7 +832,7 @@ function App() {
                     <h1 className="mt-0.5 text-lg font-semibold">{activeAccountId === null ? "All inboxes" : folderLabel(activeFolder)}</h1>
                   </div>
                   <div className="flex gap-1">
-                    <IconButton label="Compact mode" onClick={() => { setLayoutMode("compact"); setActiveAccountId(null); }}>
+                    <IconButton label="Compact mode" onClick={() => { setLayoutMode("compact"); setActiveAccountId(null); setSelectedMessageKey(null); }}>
                       <List />
                     </IconButton>
                     <IconButton label="More actions">
