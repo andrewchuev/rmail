@@ -9,6 +9,7 @@ import {
   type UpdateAccountInput,
 } from "@/lib/accounts";
 import { readCredential, saveCredentials } from "@/lib/credentials";
+import { enable as enableAutostart, isEnabled as isAutostartEnabled, disable as disableAutostart } from "@tauri-apps/plugin-autostart";
 import type { BackgroundSettings } from "@/lib/settings";
 import { connectionErrorMessage } from "@/lib/errors";
 import { ThemeSwitcher } from "./ThemeSwitcher";
@@ -59,6 +60,12 @@ const generalEntries: SearchEntry[] = [
     title: "Minimize to tray",
     description: "Hide the window when closed so background checks can continue.",
     keywords: "general settings window close hide minimize tray quit exit",
+  },
+  {
+    id: "system-autostart",
+    title: "Launch at system startup",
+    description: "Start RMail automatically when you log in to your computer.",
+    keywords: "general settings startup autostart boot login launch windows system",
   },
 ];
 
@@ -252,6 +259,25 @@ export function SettingsPage({
   onBackgroundSettingsChange,
 }: SettingsPageProps) {
   const [query, setQuery] = useState("");
+  const [autostartState, setAutostartState] = useState<boolean>(false);
+
+  useEffect(() => {
+    isAutostartEnabled().then(setAutostartState).catch(console.error);
+  }, []);
+
+  const handleAutostartToggle = async (checked: boolean) => {
+    try {
+      if (checked) {
+        await enableAutostart();
+      } else {
+        await disableAutostart();
+      }
+      setAutostartState(checked);
+    } catch (error) {
+      console.error("Failed to toggle autostart:", error);
+    }
+  };
+
   const normalizedQuery = normalize(query);
   const accountEntries = useMemo<SearchEntry[]>(() => accounts.map((account) => ({
     id: `account-${account.id}`,
@@ -355,6 +381,13 @@ export function SettingsPage({
                   <span className="grid size-10 shrink-0 place-items-center rounded-lg bg-primary/10 text-primary"><AppWindow className="size-5" /></span>
                   <span className="min-w-0 flex-1"><span className="block text-sm font-medium">Minimize to tray</span><span className="mt-1 block text-sm text-muted-foreground">Hide the window when closed so background checks can continue.</span></span>
                   <input checked={backgroundSettings.hideOnClose} onChange={(event) => onBackgroundSettingsChange({ ...backgroundSettings, hideOnClose: event.target.checked })} type="checkbox" />
+                </label>
+              ) : null}
+              {matchedIds.has("system-autostart") ? (
+                <label className="flex items-center gap-4 p-5" id="system-autostart">
+                  <span className="grid size-10 shrink-0 place-items-center rounded-lg bg-primary/10 text-primary"><AppWindow className="size-5" /></span>
+                  <span className="min-w-0 flex-1"><span className="block text-sm font-medium">Launch at system startup</span><span className="mt-1 block text-sm text-muted-foreground">Start RMail automatically when you log in to your computer.</span></span>
+                  <input checked={autostartState} onChange={(event) => handleAutostartToggle(event.target.checked)} type="checkbox" />
                 </label>
               ) : null}
             </div>

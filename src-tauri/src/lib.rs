@@ -365,15 +365,24 @@ pub fn run() {
         )
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_notification::init())
+        .plugin(tauri_plugin_autostart::init(
+            tauri_plugin_autostart::MacosLauncher::LaunchAgent,
+            Some(vec!["--minimized"]),
+        ))
         .setup(|app| {
             let app_data_dir = app.path().app_local_data_dir()?;
             let database_path = app_data_dir.join("rmail.sqlite3");
             let database = Database::open(&database_path).map_err(std::io::Error::other)?;
+            
+            use tauri_plugin_autostart::ManagerExt;
+            let is_autostart = app.autolaunch().is_enabled().unwrap_or(false);
+            
             let open = MenuItem::with_id(app, "open", "Open RMail", true, None::<&str>)?;
             let sync = MenuItem::with_id(app, "sync", "Synchronize now", true, None::<&str>)?;
+            let autostart = tauri::menu::CheckMenuItem::with_id(app, "autostart", "Launch on startup", true, is_autostart, None::<&str>)?;
             let separator = PredefinedMenuItem::separator(app)?;
             let quit = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
-            let menu = Menu::with_items(app, &[&open, &sync, &separator, &quit])?;
+            let menu = Menu::with_items(app, &[&open, &sync, &autostart, &separator, &quit])?;
             TrayIconBuilder::with_id("main-tray")
                 .icon(app.default_window_icon().unwrap().clone())
                 .menu(&menu)
@@ -384,6 +393,16 @@ pub fn run() {
                     }
                     "sync" => {
                         let _ = app.emit("tray-sync", ());
+                    }
+                    "autostart" => {
+                        use tauri_plugin_autostart::ManagerExt;
+                        let autostart_manager = app.autolaunch();
+                        let current = autostart_manager.is_enabled().unwrap_or(false);
+                        if current {
+                            let _ = autostart_manager.disable();
+                        } else {
+                            let _ = autostart_manager.enable();
+                        }
                     }
                     "quit" => app.exit(0),
                     _ => {}
