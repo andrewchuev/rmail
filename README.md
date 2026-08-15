@@ -1,69 +1,33 @@
 # RMail
 
-Легковесный desktop-клиент электронной почты на Rust, Tauri 2 и React.
+RMail is a lightweight desktop email client built with Rust, Tauri 2, React, and TypeScript.
 
-## Статус
+## Features
 
-Рабочий MVP с локальным SQLite-кешем, защищённым хранилищем паролей, IMAP-синхронизацией и SMTP-отправкой. Целевой объём первой версии описан в [docs/mvp.md](docs/mvp.md).
+- Multiple IMAP/SMTP accounts and a unified inbox.
+- Gmail OAuth 2.0 with PKCE and XOAUTH2 for IMAP and SMTP.
+- Editable account connection settings with verification before saving.
+- Background synchronization with configurable frequency, system notifications, and tray behavior.
+- Non-blocking cache refreshes that preserve the selected message and open content.
+- Local SQLite cache for mailboxes, headers, opened message bodies, attachment metadata, and drafts.
+- Plain-text composition, local drafts, SMTP sending, and explicit attachment downloads.
+- Sanitized HTML message rendering in a sandboxed iframe.
 
-## Стек
+## Security
 
-- Rust + Tauri 2
-- React 19 + TypeScript 7 + Vite
-- shadcn/ui + Tailwind CSS
-- SQLite + Tauri Stronghold
-- `async-imap`, `mailparse`, `ammonia`, `lettre`
+Passwords are stored in Tauri Stronghold. The Stronghold key and Gmail refresh tokens are stored in the operating system credential store. Passwords, tokens, email addresses, and message contents are excluded from diagnostic logs.
 
-## Возможности
+OAuth uses a random loopback callback on `127.0.0.1`, validates `state`, and uses PKCE. Google Desktop client credentials are supplied at build time through the ignored `.env` file. Changing an account identity clears its cached server data to prevent messages from different mailboxes from being mixed.
 
-- Можно подключить несколько аккаунтов вручную: адрес, IMAP- и SMTP-хосты. Используются IMAP TLS на порту 993 и SMTP STARTTLS на порту 587.
-- Gmail подключается отдельной кнопкой через Google OAuth 2.0 Authorization Code + PKCE. Пароль Google не передаётся приложению; IMAP и SMTP используют XOAUTH2.
-- На отдельной странице настроек доступны общие параметры, предиктивный поиск и управление подключением каждого аккаунта.
-- Для обычного IMAP-аккаунта можно изменить адрес, название, серверы и пароль после повторной проверки IMAP/SMTP. Gmail можно безопасно переподключить через Google OAuth.
-- Локальная виртуальная папка «Все входящие» объединяет сообщения из INBOX всех аккаунтов, не создавая папки и не копируя письма на IMAP-серверы.
-- Проверка подключения показывает безопасные подсказки для ошибок сети, TLS и учётных данных.
-- Трёхпанельный интерфейс: папки, список писем и просмотр выбранного сообщения; ширину панелей можно менять.
-- Синхронизация всех доступных IMAP-папок и до 50 последних заголовков из каждой папки в SQLite-кеш.
-- Фоновая проверка почты с настраиваемым интервалом, системным треем, управляемым скрытием окна при закрытии и системными уведомлениями.
-- Поиск по локально сохранённым отправителям и темам писем.
-- MIME-разбор выбранного письма, безопасный просмотр plain text и санитизированного HTML в изолированном iframe.
-- Перед загрузкой полного MIME-источника приложение проверяет заявленный сервером размер письма и отклоняет сообщения больше 25 МиБ.
-- Метаданные вложений и сохранение вложения по явному действию пользователя: через системный диалог и без перезаписи существующего файла.
-- Создание plain-text писем, локальное сохранение черновика и отправка через SMTP STARTTLS.
-- Локальный диагностический журнал проверок IMAP/SMTP: этап и безопасный код ошибки.
+## Development
 
-## Ограничения текущего MVP
+Requirements:
 
-- Исходящие письма пока не поддерживают вложения, HTML и копирование в папку «Отправленные» через IMAP.
-- Черновики хранятся локально; списка и повторного открытия черновиков в интерфейсе пока нет.
-- Нет IMAP-действий над письмами: отметки прочитанным, флага, архивации и удаления.
-- Нет полнотекстового поиска по телам писем и горячих клавиш.
+- Current Node.js and npm
+- Current stable Rust toolchain
+- Google OAuth Desktop client credentials for Gmail support
 
-## Данные и безопасность
-
-SQLite хранит только метаданные аккаунта, кеш папок и заголовков, тела ранее открытых писем, метаданные вложений и локальные черновики. После успешной проверки пароль почты сохраняется в Stronghold, а не в SQLite или логах. Ключ Stronghold сохраняется в системном защищённом хранилище: Windows Credential Manager на Windows, Keychain на macOS и Secret Service на Linux. Поэтому при обычном перезапуске пароль вводить не требуется. Если системное хранилище недоступно, приложение попросит пароль вручную; после успешного ввода оно повторит попытку сохранить его в системном хранилище.
-
-Для Gmail приложение открывает системный браузер и принимает OAuth callback на временном loopback-порту `127.0.0.1`. OAuth state и PKCE проверяются до обмена кода. Credentials типа Desktop app передаются при сборке через локальный `.env` и встраиваются в приложение; OAuth client secret установленного приложения не считается конфиденциальным. Refresh token хранится в системном защищённом хранилище отдельно для каждого Gmail-адреса и удаляется вместе с аккаунтом.
-
-Кеш привязан к аккаунту, IMAP-папке и UID. Для каждой папки сохраняется UIDVALIDITY: при его изменении локальный кеш папки очищается перед следующей синхронизацией, поэтому старое тело письма не может быть показано для повторно использованного UID.
-
-При изменении адреса или IMAP-сервера аккаунта его почтовый кеш очищается, чтобы письма от прежнего подключения не смешивались с новым ящиком. Локальные черновики сохраняются.
-
-Tauri Stronghold подготовлен для credentials: vault защищается Argon2-ключом, а salt и зашифрованный vault находятся в app data. Доступ к плагину ограничен явной capability `stronghold:default`. WebView защищён CSP: приложение допускает только собственные ресурсы и IPC Tauri.
-
-Если сохранение credentials завершается ошибкой, уже созданные записи Stronghold удаляются до удаления метаданных аккаунта из SQLite. Для этого capability явно разрешает только `stronghold:allow-remove-store-record` — необходимую destructive-операцию, не открывая остальные команды плагина.
-
-Диагностический журнал использует стандартную директорию логов ОС. Он не содержит паролей, адресов ящиков, содержимого писем и исходных ответов почтового сервера. Размер одного файла ограничен 512 КБ; хранятся три последние ротации.
-
-### Linux build note
-
-Stronghold использует `libsodium`. В `.cargo/config.toml` зафиксирован поддерживаемый флаг `SODIUM_DISABLE_PIE=1`, который предотвращает ошибку линковки SIMD-символов в WSLg/Linux-среде.
-
-## Разработка
-
-Требуются актуальные Node.js и Rust.
-
-Скопируйте `.env.example` в `.env` и укажите credentials OAuth-клиента Google типа Desktop app. Файл `.env` исключён из Git.
+Create the local configuration and start the application:
 
 ```bash
 cp .env.example .env
@@ -71,20 +35,23 @@ npm install
 npm run tauri dev
 ```
 
-При работе в WSL устанавливайте зависимости внутри WSL. Не используйте `node_modules`, созданный в Windows: платформенные бинарники TypeScript и oxlint несовместимы.
+Set `RMAIL_GOOGLE_CLIENT_ID` and `RMAIL_GOOGLE_CLIENT_SECRET` in `.env`. The file is excluded from Git.
 
-Проверки:
+Run the project checks:
 
 ```bash
 npm run lint
 npm run build
-cargo test --manifest-path src-tauri/Cargo.toml
-cargo clippy --manifest-path src-tauri/Cargo.toml -- -D warnings
 npm audit --omit=dev
+cargo test --manifest-path src-tauri/Cargo.toml
+cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings
 ```
 
-## Принципы
+When developing in WSL, install `node_modules` inside WSL. Do not reuse dependencies installed by Windows. The checked-in Cargo configuration sets `SODIUM_DISABLE_PIE=1` for Stronghold's `libsodium` build.
 
-- Быстрый запуск и локальный кеш.
-- Минимальный, доступный desktop-интерфейс.
-- Секреты не попадают в логи или локальную базу данных.
+## Current limitations
+
+- Outgoing attachments, HTML composition, and IMAP Sent-folder copies are not implemented.
+- Drafts cannot yet be listed or reopened from the UI.
+- Read, flag, archive, and delete IMAP actions are not implemented.
+- Search covers cached sender and subject fields, not full message bodies.

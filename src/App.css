@@ -47,8 +47,28 @@
   border-radius: 0.5rem;
   display: block;
   padding: 0.875rem 0.75rem;
-  transition: background-color 150ms ease;
+  transition: background-color 150ms ease, opacity 180ms ease, transform 180ms ease;
   width: 100%;
+}
+
+@starting-style {
+  .message-row {
+    opacity: 0;
+    transform: translateY(-0.25rem);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .message-row {
+    transition: background-color 150ms ease;
+  }
+
+  @starting-style {
+    .message-row {
+      opacity: 1;
+      transform: none;
+    }
+  }
 }
 
 .message-row:hover,

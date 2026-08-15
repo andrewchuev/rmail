@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, useTransition, type FormEvent, type ReactNode } from "react";
 import { Archive, ChevronDown, Clock3, Inbox, MoreHorizontal, Paperclip, PenLine, Plus, Search, Settings, Trash2 } from "lucide-react";
 import { save } from "@tauri-apps/plugin-dialog";
 import { isPermissionGranted, requestPermission, sendNotification } from "@tauri-apps/plugin-notification";
@@ -53,7 +53,7 @@ import { applyWindowSettings, loadBackgroundSettings, saveBackgroundSettings, ty
 import "./App.css";
 
 function folderLabel(path: string) {
-  return path.toUpperCase() === "INBOX" ? "Входящие" : path;
+  return path.toUpperCase() === "INBOX" ? "Inbox" : path;
 }
 
 function attachmentFileName(name: string) {
@@ -62,6 +62,29 @@ function attachmentFileName(name: string) {
 
 function messageKey(message: Pick<CachedMessage, "accountId" | "mailboxPath" | "uid">) {
   return `${message.accountId}:${message.mailboxPath}:${message.uid}`;
+}
+
+function cachedMessagesEqual(left: CachedMessage[], right: CachedMessage[]) {
+  return left.length === right.length && left.every((message, index) => {
+    const candidate = right[index];
+    if (!candidate) return false;
+    return messageKey(message) === messageKey(candidate)
+      && message.accountDisplayName === candidate.accountDisplayName
+      && message.sender === candidate.sender
+      && message.subject === candidate.subject
+      && message.date === candidate.date
+      && message.internalDate === candidate.internalDate
+      && message.isRead === candidate.isRead;
+  });
+}
+
+function cachedMailboxesEqual(left: CachedMailbox[], right: CachedMailbox[]) {
+  return left.length === right.length && left.every((mailbox, index) => {
+    const candidate = right[index];
+    if (!candidate) return false;
+    return mailbox.path === candidate.path
+      && mailbox.unreadCount === candidate.unreadCount;
+  });
 }
 
 type ComposeState = {
@@ -127,7 +150,7 @@ function AccountSetup({
     try {
       await onGmailConnected(await connectGmail());
     } catch (reason) {
-      setError(reason instanceof Error ? reason.message : String(reason || "Не удалось подключить Gmail."));
+      setError(reason instanceof Error ? reason.message : String(reason || "Unable to connect Gmail."));
     } finally {
       setGmailConnecting(false);
     }
@@ -156,7 +179,7 @@ function AccountSetup({
         password: connectionPassword,
       });
       setConnectionVerified(true);
-      setConnectionMessage(`Подключение подтверждено: найдено папок — ${status.mailboxes.length}.`);
+      setConnectionMessage(`Connection verified. Mailboxes found: ${status.mailboxes.length}.`);
     } catch (reason) {
       setError(connectionErrorMessage(reason));
       void diagnosticLogPath().then(setDiagnosticLog).catch(() => undefined);
@@ -170,17 +193,17 @@ function AccountSetup({
     setError(null);
 
     if (!isConnectionVerified) {
-      setError("Сначала проверьте подключение.");
+      setError("Verify the connection first.");
       return;
     }
 
     if (vaultPassword.length < 12) {
-      setError("Пароль хранилища должен содержать не менее 12 символов.");
+      setError("The vault password must be at least 12 characters long.");
       return;
     }
 
     if (!isAdditional && vaultPassword !== vaultPasswordConfirmation) {
-      setError("Пароли хранилища не совпадают.");
+      setError("The vault passwords do not match.");
       return;
     }
 
@@ -195,7 +218,7 @@ function AccountSetup({
       } catch {
         await deleteCredentials(account.id, vaultPassword).catch(() => undefined);
         await deleteAccount(account.id).catch(() => undefined);
-        throw new Error("Не удалось сохранить данные для входа. Аккаунт не был добавлен.");
+        throw new Error("Unable to save credentials. The account was not added.");
       }
 
       await onAccountCreated(account, connectionPassword, vaultPassword);
@@ -210,38 +233,38 @@ function AccountSetup({
     <main className="grid min-h-svh place-items-center bg-background px-6 py-6">
       <section className="w-full max-w-md rounded-2xl border bg-card p-7 shadow-sm" aria-labelledby="setup-title">
         <span className="grid size-10 place-items-center rounded-xl bg-primary text-lg font-bold text-primary-foreground">R</span>
-        <p className="mt-7 text-sm font-medium text-primary">{isAdditional ? "Новый аккаунт" : "Первый аккаунт"}</p>
-        <h1 id="setup-title" className="mt-1 text-2xl font-semibold tracking-tight">Подключите почту</h1>
+        <p className="mt-7 text-sm font-medium text-primary">{isAdditional ? "New account" : "First account"}</p>
+        <h1 id="setup-title" className="mt-1 text-2xl font-semibold tracking-tight">Connect your email</h1>
         <p className="mt-3 text-sm leading-6 text-muted-foreground">
-          Проверьте доступ к IMAP и SMTP, затем защитите данные для входа паролем хранилища.
+          Verify IMAP and SMTP access, then protect your credentials with a vault password.
         </p>
 
         <Button className="mt-6 w-full" disabled={isGmailConnecting} onClick={() => void connectGoogleAccount()} type="button" variant="secondary">
-          {isGmailConnecting ? "Ожидаем Google…" : "Подключить Gmail"}
+          {isGmailConnecting ? "Waiting for Google…" : "Connect Gmail"}
         </Button>
-        <div className="my-5 flex items-center gap-3 text-xs text-muted-foreground"><span className="h-px flex-1 bg-border" /><span>или IMAP вручную</span><span className="h-px flex-1 bg-border" /></div>
+        <div className="my-5 flex items-center gap-3 text-xs text-muted-foreground"><span className="h-px flex-1 bg-border" /><span>or configure IMAP manually</span><span className="h-px flex-1 bg-border" /></div>
 
         <form className="space-y-4" onSubmit={submit}>
           <label className="setup-field">
-            <span>Название аккаунта</span>
-            <input onChange={(event) => updateField("displayName", event.target.value)} placeholder="Рабочая почта" required value={input.displayName} />
+            <span>Account name</span>
+            <input onChange={(event) => updateField("displayName", event.target.value)} placeholder="Work email" required value={input.displayName} />
           </label>
           <label className="setup-field">
-            <span>Электронная почта</span>
+            <span>Email address</span>
             <input onChange={(event) => updateField("email", event.target.value)} placeholder="name@company.com" required type="email" value={input.email} />
           </label>
           <div className="grid gap-4 sm:grid-cols-2">
             <label className="setup-field">
-              <span>IMAP-сервер</span>
+              <span>IMAP server</span>
               <input onChange={(event) => updateField("imapHost", event.target.value)} placeholder="imap.company.com" required value={input.imapHost} />
             </label>
             <label className="setup-field">
-              <span>SMTP-сервер</span>
+              <span>SMTP server</span>
               <input onChange={(event) => updateField("smtpHost", event.target.value)} placeholder="smtp.company.com" required value={input.smtpHost} />
             </label>
           </div>
           <label className="setup-field">
-            <span>Пароль почты</span>
+            <span>Email password</span>
             <input
               onChange={(event) => {
                 setConnectionPassword(event.target.value);
@@ -252,24 +275,24 @@ function AccountSetup({
               type="password"
               value={connectionPassword}
             />
-            <small>IMAP: SSL/TLS, порт 993 · SMTP: STARTTLS, порт 587</small>
+            <small>IMAP: SSL/TLS, port 993 · SMTP: STARTTLS, port 587</small>
           </label>
           <Button className="w-full" disabled={isTesting} onClick={() => void testConnection()} type="button" variant="secondary">
-            {isTesting ? "Проверяем подключение…" : "Проверить подключение"}
+            {isTesting ? "Verifying connection…" : "Verify connection"}
           </Button>
           {connectionMessage ? <p className="text-sm text-emerald-700 dark:text-emerald-400" role="status">{connectionMessage}</p> : null}
           <label className="setup-field">
-            <span>{isAdditional ? "Пароль текущего хранилища" : "Пароль хранилища"}</span>
+            <span>{isAdditional ? "Current vault password" : "Vault password"}</span>
             <input
               onChange={(event) => setVaultPassword(event.target.value)}
               required
               type="password"
               value={vaultPassword}
             />
-            <small>{isAdditional ? "Используйте пароль, которым уже защищены подключённые аккаунты." : "Не менее 12 символов. Он будет сохранён в защищённом хранилище системы."}</small>
+            <small>{isAdditional ? "Use the password that already protects your connected accounts." : "Use at least 12 characters. It will be stored in the operating system credential store."}</small>
           </label>
           {isAdditional ? null : <label className="setup-field">
-            <span>Повторите пароль хранилища</span>
+            <span>Confirm vault password</span>
             <input
               onChange={(event) => setVaultPasswordConfirmation(event.target.value)}
               required
@@ -278,11 +301,11 @@ function AccountSetup({
             />
           </label>}
           {error ? <p className="text-sm text-destructive" role="alert">{error}</p> : null}
-          {diagnosticLog ? <p className="text-xs leading-5 text-muted-foreground">Диагностический журнал: <code className="break-all">{diagnosticLog}</code></p> : null}
+          {diagnosticLog ? <p className="text-xs leading-5 text-muted-foreground">Diagnostic log: <code className="break-all">{diagnosticLog}</code></p> : null}
           <Button className="mt-2 w-full" disabled={isSubmitting} type="submit">
-            {isSubmitting ? "Сохраняем…" : "Продолжить"}
+            {isSubmitting ? "Saving…" : "Continue"}
           </Button>
-          {onCancel ? <Button className="w-full" onClick={onCancel} type="button" variant="ghost">Отмена</Button> : null}
+          {onCancel ? <Button className="w-full" onClick={onCancel} type="button" variant="ghost">Cancel</Button> : null}
         </form>
       </section>
     </main>
@@ -290,6 +313,7 @@ function AccountSetup({
 }
 
 function App() {
+  const [, startTransition] = useTransition();
   const [accounts, setAccounts] = useState<Account[] | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [mailboxes, setMailboxes] = useState<CachedMailbox[]>([]);
@@ -304,7 +328,7 @@ function App() {
   const [composeMessage, setComposeMessage] = useState<string | null>(null);
   const [isSavingDraft, setSavingDraft] = useState(false);
   const [isSending, setSending] = useState(false);
-  const [syncMessage, setSyncMessage] = useState("Откройте хранилище, чтобы синхронизировать почту");
+  const [syncMessage, setSyncMessage] = useState("Unlock the vault to synchronize email");
   const [syncRevision, setSyncRevision] = useState(0);
   const [vaultPassword, setVaultPassword] = useState("");
   const [unlockPassword, setUnlockPassword] = useState("");
@@ -322,6 +346,7 @@ function App() {
   const [activeView, setActiveView] = useState<"mail" | "settings">("mail");
   const hasCompletedBackgroundSync = useRef(false);
   const knownMessageKeys = useRef<Set<string>>(new Set());
+  const syncInProgress = useRef(false);
 
   const visibleMessages = useMemo(() => {
     const normalizedQuery = query.trim().toLowerCase();
@@ -347,11 +372,11 @@ function App() {
       return "";
     }
     if (!vaultPassword) {
-      throw new Error("Откройте хранилище, чтобы продолжить.");
+      throw new Error("Unlock the vault to continue.");
     }
     const password = await readCredential(account.id, name, vaultPassword);
     if (!password) {
-      throw new Error("Данные для входа не найдены в хранилище.");
+      throw new Error("Credentials were not found in the vault.");
     }
     return password;
   }
@@ -423,12 +448,14 @@ function App() {
         if (ignore) {
           return;
         }
-        setMailboxes(items);
-        setActiveFolder((current) => items.some((mailbox) => mailbox.path === current) ? current : (items[0]?.path ?? "INBOX"));
+        startTransition(() => {
+          setMailboxes((current) => cachedMailboxesEqual(current, items) ? current : items);
+          setActiveFolder((current) => items.some((mailbox) => mailbox.path === current) ? current : (items[0]?.path ?? "INBOX"));
+        });
       })
       .catch(() => {
         if (!ignore) {
-          setSyncMessage("Не удалось загрузить локальный кеш");
+          setSyncMessage("Unable to load the local cache");
         }
       });
 
@@ -451,14 +478,16 @@ function App() {
         if (ignore) {
           return;
         }
-        setCachedMessages(items);
-        setSelectedMessageKey(items[0] ? messageKey(items[0]) : null);
-        setContentMode("text");
-        setAttachmentMessage(null);
+        startTransition(() => {
+          setCachedMessages((current) => cachedMessagesEqual(current, items) ? current : items);
+          setSelectedMessageKey((current) => current && items.some((message) => messageKey(message) === current)
+            ? current
+            : (items[0] ? messageKey(items[0]) : null));
+        });
       })
       .catch(() => {
         if (!ignore) {
-          setSyncMessage("Не удалось загрузить письма из кеша");
+          setSyncMessage("Unable to load messages from the cache");
         }
       });
 
@@ -481,6 +510,8 @@ function App() {
     setMessageBody(null);
     setBodyLoading(true);
     setBodyError(null);
+    setContentMode("text");
+    setAttachmentMessage(null);
     void accountCredential(account, "imapPassword")
       .then((password) => loadMessageBody(account.id, message.mailboxPath, message.uid, password))
       .then((body) => {
@@ -490,7 +521,7 @@ function App() {
       })
       .catch((reason) => {
         if (!ignore) {
-          setBodyError(reason instanceof Error ? reason.message : "Не удалось загрузить письмо.");
+          setBodyError(reason instanceof Error ? reason.message : "Unable to load the message.");
         }
       })
       .finally(() => {
@@ -502,7 +533,7 @@ function App() {
     return () => {
       ignore = true;
     };
-  }, [accounts, selectedMessage, vaultPassword]);
+  }, [accounts, selectedMessageKey, vaultPassword]);
 
   useEffect(() => {
     if (
@@ -519,7 +550,7 @@ function App() {
   }
 
   if (!accounts) {
-    return <main className="grid min-h-svh place-items-center text-sm text-muted-foreground">Загружаем настройки…</main>;
+    return <main className="grid min-h-svh place-items-center text-sm text-muted-foreground">Loading settings…</main>;
   }
 
   if (accounts.length === 0 || isAddingAccount) {
@@ -534,10 +565,10 @@ function App() {
           setAddingAccount(false);
           try {
             const status = await syncAccount(account.id, "");
-            setSyncMessage(`Синхронизировано: папок — ${status.mailboxCount}, писем — ${status.messageCount}`);
+            setSyncMessage(`Synchronized: ${status.mailboxCount} mailboxes, ${status.messageCount} messages`);
             setSyncRevision((current) => current + 1);
           } catch (reason) {
-            setSyncMessage(reason instanceof Error ? reason.message : String(reason || "Gmail подключён, но первая синхронизация не удалась"));
+            setSyncMessage(reason instanceof Error ? reason.message : String(reason || "Gmail was connected, but the initial synchronization failed"));
           }
         }}
         onAccountCreated={async (account, password, newVaultPassword) => {
@@ -549,10 +580,10 @@ function App() {
 
           try {
             const status = await syncAccount(account.id, password);
-            setSyncMessage(`Синхронизировано: папок — ${status.mailboxCount}, писем — ${status.messageCount}`);
+            setSyncMessage(`Synchronized: ${status.mailboxCount} mailboxes, ${status.messageCount} messages`);
             setSyncRevision((current) => current + 1);
           } catch {
-            setSyncMessage("Аккаунт сохранён, но первая синхронизация не удалась");
+            setSyncMessage("The account was saved, but the initial synchronization failed");
           }
         }}
       />
@@ -572,13 +603,13 @@ function App() {
     try {
       const password = await readCredential(account.id, "imapPassword", unlockPassword);
       if (!password) {
-        throw new Error("Данные для входа не найдены в хранилище.");
+        throw new Error("Credentials were not found in the vault.");
       }
       setVaultPassword(unlockPassword);
       void saveStoredVaultPassword(unlockPassword).catch(() => undefined);
       setUnlockPassword("");
     } catch {
-      setUnlockError("Не удалось открыть хранилище. Проверьте пароль.");
+      setUnlockError("Unable to unlock the vault. Check the password.");
     }
   }
 
@@ -599,9 +630,9 @@ function App() {
     try {
       const password = await accountCredential(account, "imapPassword");
       await saveMessageAttachment(account.id, message.mailboxPath, message.uid, position, password, destination);
-      setAttachmentMessage(`Вложение «${name}» сохранено.`);
+      setAttachmentMessage(`Attachment “${name}” was saved.`);
     } catch (reason) {
-      setAttachmentMessage(reason instanceof Error ? reason.message : "Не удалось сохранить вложение.");
+      setAttachmentMessage(reason instanceof Error ? reason.message : "Unable to save the attachment.");
     } finally {
       setSavingAttachmentPosition(null);
     }
@@ -618,7 +649,7 @@ function App() {
   async function saveComposeDraft(): Promise<Draft> {
     const account = accountList.find((item) => item.id === composeAccountId);
     if (!account) {
-      throw new Error("Аккаунт не найден.");
+      throw new Error("Account not found.");
     }
 
     const draft = await saveDraft({ ...compose, accountId: account.id, id: draftId });
@@ -631,9 +662,9 @@ function App() {
     setSavingDraft(true);
     try {
       await saveComposeDraft();
-      setComposeMessage("Черновик сохранён на этом устройстве.");
+      setComposeMessage("Draft saved on this device.");
     } catch (reason) {
-      setComposeMessage(reason instanceof Error ? reason.message : "Не удалось сохранить черновик.");
+      setComposeMessage(reason instanceof Error ? reason.message : "Unable to save the draft.");
     } finally {
       setSavingDraft(false);
     }
@@ -643,7 +674,7 @@ function App() {
     event.preventDefault();
     const account = accountList.find((item) => item.id === composeAccountId);
     if (!account || (account.authType !== "gmail_oauth" && !vaultPassword)) {
-      setComposeMessage("Откройте хранилище, чтобы отправить письмо.");
+      setComposeMessage("Unlock the vault to send the message.");
       return;
     }
 
@@ -657,45 +688,52 @@ function App() {
       setComposeOpen(false);
       setCompose(emptyCompose);
       setDraftId(null);
-      setSyncMessage("Письмо отправлено через SMTP");
+      setSyncMessage("Message sent through SMTP");
     } catch (reason) {
-      setComposeMessage(reason instanceof Error ? reason.message : "Не удалось отправить письмо.");
+      setComposeMessage(reason instanceof Error ? reason.message : "Unable to send the message.");
     } finally {
       setSending(false);
     }
   }
 
   async function syncAllAccounts(isBackground = false) {
-    if (isSyncing) {
+    if (syncInProgress.current) {
       return;
     }
 
-    setSyncing(true);
-    const results = await Promise.allSettled(accountList.map(async (account) => {
-      const password = await accountCredential(account, "imapPassword");
-      return syncAccount(account.id, password);
-    }));
-    const successful = results.filter((result) => result.status === "fulfilled");
-    const messageCount = successful.reduce(
-      (count, result) => count + result.value.messageCount,
-      0,
-    );
-    setSyncRevision((current) => current + 1);
-    const inbox = await listUnifiedInbox();
-    const currentKeys = new Set(inbox.map(messageKey));
-    const newMessageCount = [...currentKeys].filter((key) => !knownMessageKeys.current.has(key)).length;
-    knownMessageKeys.current = currentKeys;
-    if (isBackground && hasCompletedBackgroundSync.current && successful.length && backgroundSettings.notifications && newMessageCount) {
-      const granted = await isPermissionGranted() || await requestPermission() === "granted";
-      if (granted) sendNotification({ title: "RMail", body: `Новых писем: ${newMessageCount}.` });
+    syncInProgress.current = true;
+    if (!isBackground) setSyncing(true);
+    try {
+      const results = await Promise.allSettled(accountList.map(async (account) => {
+        const password = await accountCredential(account, "imapPassword");
+        return syncAccount(account.id, password);
+      }));
+      const successful = results.filter((result) => result.status === "fulfilled");
+      const messageCount = successful.reduce(
+        (count, result) => count + result.value.messageCount,
+        0,
+      );
+      startTransition(() => setSyncRevision((current) => current + 1));
+      const inbox = await listUnifiedInbox();
+      const currentKeys = new Set(inbox.map(messageKey));
+      const newMessageCount = [...currentKeys].filter((key) => !knownMessageKeys.current.has(key)).length;
+      knownMessageKeys.current = currentKeys;
+      if (isBackground && hasCompletedBackgroundSync.current && successful.length && backgroundSettings.notifications && newMessageCount) {
+        const granted = await isPermissionGranted() || await requestPermission() === "granted";
+        if (granted) sendNotification({ title: "RMail", body: `New messages: ${newMessageCount}.` });
+      }
+      hasCompletedBackgroundSync.current = true;
+      startTransition(() => setSyncMessage(
+        successful.length === accountList.length
+          ? `Synchronized accounts: ${successful.length}, messages: ${messageCount}`
+          : `Synchronized accounts: ${successful.length} of ${accountList.length}`,
+      ));
+    } catch {
+      if (!isBackground) setSyncMessage("Unable to update the local email cache");
+    } finally {
+      syncInProgress.current = false;
+      if (!isBackground) setSyncing(false);
     }
-    hasCompletedBackgroundSync.current = true;
-    setSyncMessage(
-      successful.length === accountList.length
-        ? `Синхронизировано ящиков: ${successful.length}, писем: ${messageCount}`
-        : `Синхронизировано ящиков: ${successful.length} из ${accountList.length}`,
-    );
-    setSyncing(false);
   }
 
   if (activeView === "settings") {
@@ -726,33 +764,33 @@ function App() {
                   RMail
                   <ChevronDown className="size-3.5 text-muted-foreground" />
                 </button>
-                <IconButton label="Добавить аккаунт" onClick={() => setAddingAccount(true)}>
+                <IconButton label="Add account" onClick={() => setAddingAccount(true)}>
                   <Plus />
                 </IconButton>
               </div>
 
               <Button className="mt-6 w-full justify-start" onClick={openCompose}>
                 <PenLine />
-                Написать
+                Compose
               </Button>
 
               <Button className="mt-2 w-full" disabled={isSyncing} onClick={() => void syncAllAccounts()} size="sm" variant="secondary">
-                {isSyncing ? "Синхронизация…" : "Синхронизировать всё"}
+                {isSyncing ? "Synchronizing…" : "Synchronize all"}
               </Button>
 
               {!vaultPassword && accountList.some((account) => account.authType === "password") ? (
                 <form className="mt-3 space-y-2 rounded-lg border bg-background/70 p-3" onSubmit={unlockVault}>
-                  <p className="text-xs leading-5 text-muted-foreground">Откройте хранилище один раз, чтобы сохранить ключ в системе.</p>
+                  <p className="text-xs leading-5 text-muted-foreground">Unlock the vault once to save its key in the operating system credential store.</p>
                   <label className="setup-field">
-                    <span className="sr-only">Пароль хранилища</span>
-                    <input onChange={(event) => setUnlockPassword(event.target.value)} placeholder="Пароль хранилища" required type="password" value={unlockPassword} />
+                    <span className="sr-only">Vault password</span>
+                    <input onChange={(event) => setUnlockPassword(event.target.value)} placeholder="Vault password" required type="password" value={unlockPassword} />
                   </label>
                   {unlockError ? <p className="text-xs text-destructive" role="alert">{unlockError}</p> : null}
-                  <Button className="w-full" size="sm" type="submit">Открыть хранилище</Button>
+                  <Button className="w-full" size="sm" type="submit">Unlock vault</Button>
                 </form>
               ) : null}
 
-              <nav aria-label="Почтовые папки" className="mt-6 space-y-1">
+              <nav aria-label="Mail folders" className="mt-6 space-y-1">
                 <button
                   aria-current={activeAccountId === null ? "page" : undefined}
                   className="folder-link"
@@ -761,9 +799,9 @@ function App() {
                   type="button"
                 >
                   <Inbox className="size-4" />
-                  <span>Все входящие</span>
+                  <span>All inboxes</span>
                 </button>
-                <p className="px-2 pt-4 text-xs font-medium text-muted-foreground">Аккаунты</p>
+                <p className="px-2 pt-4 text-xs font-medium text-muted-foreground">Accounts</p>
                 {accountList.map((account) => (
                   <button
                     className="folder-link"
@@ -796,13 +834,13 @@ function App() {
 
               <Button className="mt-4 w-full justify-start" onClick={() => setActiveView("settings")} variant="ghost">
                 <Settings />
-                Настройки
+                Settings
               </Button>
 
-              <div className="mt-auto rounded-lg border bg-background/70 p-3 text-xs text-muted-foreground">
+              <div className="mt-auto min-h-20 rounded-lg border bg-background/70 p-3 text-xs text-muted-foreground">
                 <div className="mb-2 flex items-center gap-2 font-medium text-foreground">
                   <span className="size-2 rounded-full bg-emerald-500" />
-                  {syncMessage.startsWith("Синхронизировано") ? "Синхронизация завершена" : "Синхронизация ожидает"}
+                  {syncMessage.startsWith("Synchronized") ? "Synchronization complete" : "Synchronization pending"}
                 </div>
                 {syncMessage}
               </div>
@@ -816,19 +854,19 @@ function App() {
               <header className="border-b px-5 py-4">
                 <div className="flex items-center justify-between">
                   <div>
-                    <p className="text-xs font-medium text-muted-foreground">{activeAccountId === null ? "Общий ящик" : accountList.find((account) => account.id === activeAccountId)?.displayName}</p>
-                    <h1 className="mt-0.5 text-lg font-semibold">{activeAccountId === null ? "Все входящие" : folderLabel(activeFolder)}</h1>
+                    <p className="text-xs font-medium text-muted-foreground">{activeAccountId === null ? "Unified inbox" : accountList.find((account) => account.id === activeAccountId)?.displayName}</p>
+                    <h1 className="mt-0.5 text-lg font-semibold">{activeAccountId === null ? "All inboxes" : folderLabel(activeFolder)}</h1>
                   </div>
-                  <IconButton label="Дополнительные действия">
+                  <IconButton label="More actions">
                     <MoreHorizontal />
                   </IconButton>
                 </div>
                 <label className="search-field mt-4">
                   <Search className="size-4" />
-                  <span className="sr-only">Поиск писем</span>
+                  <span className="sr-only">Search messages</span>
                   <input
                     onChange={(event) => setQuery(event.target.value)}
-                    placeholder="Поиск"
+                    placeholder="Search"
                     type="search"
                     value={query}
                   />
@@ -864,7 +902,7 @@ function App() {
                     ))
                   ) : (
                     <div className="grid min-h-48 place-items-center px-8 text-center text-sm text-muted-foreground">
-                      {query ? "Ничего не найдено. Попробуйте другой запрос." : "В этой папке пока нет синхронизированных писем."}
+                      {query ? "No messages found. Try another search." : "This folder has no synchronized messages yet."}
                     </div>
                   )}
                 </div>
@@ -878,11 +916,11 @@ function App() {
             <article className="flex h-full min-w-80 flex-col">
               <header className="flex items-center justify-between border-b px-6 py-4">
                 <div className="flex gap-1">
-                  <IconButton label="Архивировать"><Archive /></IconButton>
-                  <IconButton label="Удалить"><Trash2 /></IconButton>
-                  <IconButton label="Отложить"><Clock3 /></IconButton>
+                  <IconButton label="Archive"><Archive /></IconButton>
+                  <IconButton label="Delete"><Trash2 /></IconButton>
+                  <IconButton label="Snooze"><Clock3 /></IconButton>
                 </div>
-                <IconButton label="Ещё"><MoreHorizontal /></IconButton>
+                <IconButton label="More"><MoreHorizontal /></IconButton>
               </header>
 
               <ScrollArea className="min-h-0 flex-1">
@@ -904,19 +942,19 @@ function App() {
 
                       {!vaultPassword && accountList.find((account) => account.id === selectedMessage.accountId)?.authType === "password" ? (
                         <form className="mt-8 max-w-sm space-y-3" onSubmit={unlockVault}>
-                          <p className="text-sm leading-6 text-muted-foreground">Откройте хранилище, чтобы загрузить текст письма.</p>
+                          <p className="text-sm leading-6 text-muted-foreground">Unlock the vault to load the message body.</p>
                           <label className="setup-field">
-                            <span>Пароль хранилища</span>
+                            <span>Vault password</span>
                             <input onChange={(event) => setUnlockPassword(event.target.value)} required type="password" value={unlockPassword} />
                           </label>
                           {unlockError ? <p className="text-sm text-destructive" role="alert">{unlockError}</p> : null}
-                          <Button type="submit">Открыть хранилище</Button>
+                          <Button type="submit">Unlock vault</Button>
                         </form>
                       ) : (
                         <>
                           {messageBody?.html ? (
                             <div className="mt-8 flex gap-2">
-                              <Button onClick={() => setContentMode("text")} size="sm" type="button" variant={contentMode === "text" ? "secondary" : "ghost"}>Текст</Button>
+                              <Button onClick={() => setContentMode("text")} size="sm" type="button" variant={contentMode === "text" ? "secondary" : "ghost"}>Text</Button>
                               <Button onClick={() => setContentMode("html")} size="sm" type="button" variant={contentMode === "html" ? "secondary" : "ghost"}>HTML</Button>
                             </div>
                           ) : null}
@@ -926,11 +964,11 @@ function App() {
                               referrerPolicy="no-referrer"
                               sandbox=""
                               srcDoc={messageBody.html}
-                              title="HTML-версия письма"
+                              title="HTML message version"
                             />
                           ) : (
                             <div className="mail-body mt-8 whitespace-pre-wrap break-words text-[0.95rem] leading-7 text-foreground/85">
-                              {isBodyLoading ? "Загружаем текст письма…" : bodyError ?? messageBody?.text ?? "Текст письма недоступен."}
+                              {isBodyLoading ? "Loading message body…" : bodyError ?? messageBody?.text ?? "Message body is unavailable."}
                             </div>
                           )}
                           {messageBody?.attachments.length ? (
@@ -947,7 +985,7 @@ function App() {
                                   variant="outline"
                                 >
                                   <Paperclip className="size-3.5" />
-                                  {savingAttachmentPosition === attachment.position ? "Сохраняем…" : `${attachment.name} · ${attachment.mimeType}`}
+                                  {savingAttachmentPosition === attachment.position ? "Saving…" : `${attachment.name} · ${attachment.mimeType}`}
                                 </Button>
                               ))}
                               </div>
@@ -961,7 +999,7 @@ function App() {
                   </div>
                 ) : (
                   <div className="grid h-full place-items-center p-8 text-center text-sm text-muted-foreground">
-                    Выберите письмо, чтобы посмотреть его заголовок.
+                    Select a message to view it.
                   </div>
                 )}
               </ScrollArea>
@@ -970,27 +1008,27 @@ function App() {
         </ResizablePanelGroup>
 
         {isComposeOpen ? (
-          <form aria-label="Новое письмо" className="compose-window" onSubmit={handleSendMessage}>
+          <form aria-label="New message" className="compose-window" onSubmit={handleSendMessage}>
             <div className="flex items-center justify-between border-b px-4 py-3">
-              <span className="text-sm font-medium">Новое письмо</span>
+              <span className="text-sm font-medium">New message</span>
               <Button onClick={() => setComposeOpen(false)} size="icon-xs" type="button" variant="ghost">×</Button>
             </div>
             <label className="compose-field">
-              <span>От кого</span>
+              <span>From</span>
               <select onChange={(event) => setComposeAccountId(Number(event.target.value))} value={composeAccountId ?? ""}>
                 {accountList.map((account) => <option key={account.id} value={account.id}>{account.displayName} · {account.email}</option>)}
               </select>
             </label>
-            <label className="compose-field"><span>Кому</span><input autoFocus onChange={(event) => setCompose((current) => ({ ...current, recipients: event.target.value }))} placeholder="name@company.com, colleague@company.com" value={compose.recipients} /></label>
-            <label className="compose-field"><span>Тема</span><input onChange={(event) => setCompose((current) => ({ ...current, subject: event.target.value }))} placeholder="Тема" value={compose.subject} /></label>
-            <textarea aria-label="Текст письма" className="min-h-36 flex-1 resize-none p-4 outline-none" onChange={(event) => setCompose((current) => ({ ...current, body: event.target.value }))} placeholder="Напишите сообщение…" value={compose.body} />
+            <label className="compose-field"><span>To</span><input autoFocus onChange={(event) => setCompose((current) => ({ ...current, recipients: event.target.value }))} placeholder="name@company.com, colleague@company.com" value={compose.recipients} /></label>
+            <label className="compose-field"><span>Subject</span><input onChange={(event) => setCompose((current) => ({ ...current, subject: event.target.value }))} placeholder="Subject" value={compose.subject} /></label>
+            <textarea aria-label="Message body" className="min-h-36 flex-1 resize-none p-4 outline-none" onChange={(event) => setCompose((current) => ({ ...current, body: event.target.value }))} placeholder="Write a message…" value={compose.body} />
             {composeMessage ? <p className="px-4 text-sm text-muted-foreground" role="status">{composeMessage}</p> : null}
             <div className="flex items-center justify-between border-t p-3">
               <div className="flex gap-2">
-                <Button disabled={isSending} type="submit">{isSending ? "Отправляем…" : "Отправить"}</Button>
-                <Button disabled={isSavingDraft || isSending} onClick={() => void handleSaveDraft()} type="button" variant="secondary">{isSavingDraft ? "Сохраняем…" : "Сохранить черновик"}</Button>
+                <Button disabled={isSending} type="submit">{isSending ? "Sending…" : "Send"}</Button>
+                <Button disabled={isSavingDraft || isSending} onClick={() => void handleSaveDraft()} type="button" variant="secondary">{isSavingDraft ? "Saving…" : "Save draft"}</Button>
               </div>
-              <span className="text-xs text-muted-foreground">Без вложений</span>
+              <span className="text-xs text-muted-foreground">No attachments</span>
             </div>
           </form>
         ) : null}

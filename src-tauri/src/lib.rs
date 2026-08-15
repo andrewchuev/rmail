@@ -335,11 +335,10 @@ pub fn run() {
 
             app.handle()
                 .plugin(tauri_plugin_stronghold::Builder::with_argon2(&salt_path).build())?;
-            let open = MenuItem::with_id(app, "open", "Открыть RMail", true, None::<&str>)?;
-            let sync =
-                MenuItem::with_id(app, "sync", "Синхронизировать сейчас", true, None::<&str>)?;
+            let open = MenuItem::with_id(app, "open", "Open RMail", true, None::<&str>)?;
+            let sync = MenuItem::with_id(app, "sync", "Synchronize now", true, None::<&str>)?;
             let separator = PredefinedMenuItem::separator(app)?;
-            let quit = MenuItem::with_id(app, "quit", "Выйти", true, None::<&str>)?;
+            let quit = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
             let menu = Menu::with_items(app, &[&open, &sync, &separator, &quit])?;
             TrayIconBuilder::with_id("main-tray")
                 .menu(&menu)
