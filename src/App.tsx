@@ -16,18 +16,22 @@ import {
 } from "@/components/ui/tooltip";
 import {
   createAccount,
+  deleteDraft,
   deleteAccount,
   listAccounts,
   listCachedMailboxes,
   listCachedMessages,
   loadMessageBody,
   saveMessageAttachment,
+  saveDraft,
+  sendMessage,
   syncAccount,
   testMailConnection,
   type Account,
   type CachedMailbox,
   type CachedMessage,
   type CreateAccountInput,
+  type Draft,
   type MessageBody,
 } from "@/lib/accounts";
 import { readCredential, saveCredentials } from "@/lib/credentials";
@@ -40,6 +44,14 @@ function folderLabel(path: string) {
 function attachmentFileName(name: string) {
   return name.replace(/[\\/]/g, "_").trim() || "attachment";
 }
+
+type ComposeState = {
+  recipients: string;
+  subject: string;
+  body: string;
+};
+
+const emptyCompose: ComposeState = { recipients: "", subject: "", body: "" };
 
 function IconButton({
   label,
@@ -232,6 +244,11 @@ function App() {
   const [selectedId, setSelectedId] = useState<number | null>(null);
   const [query, setQuery] = useState("");
   const [isComposeOpen, setComposeOpen] = useState(false);
+  const [compose, setCompose] = useState<ComposeState>(emptyCompose);
+  const [draftId, setDraftId] = useState<number | null>(null);
+  const [composeMessage, setComposeMessage] = useState<string | null>(null);
+  const [isSavingDraft, setSavingDraft] = useState(false);
+  const [isSending, setSending] = useState(false);
   const [syncMessage, setSyncMessage] = useState("Откройте хранилище, чтобы синхронизировать почту");
   const [syncRevision, setSyncRevision] = useState(0);
   const [vaultPassword, setVaultPassword] = useState("");
@@ -396,6 +413,66 @@ function App() {
     }
   }
 
+  function openCompose() {
+    setCompose(emptyCompose);
+    setDraftId(null);
+    setComposeMessage(null);
+    setComposeOpen(true);
+  }
+
+  async function saveComposeDraft(): Promise<Draft> {
+    const account = accounts?.[0];
+    if (!account) {
+      throw new Error("Аккаунт не найден.");
+    }
+
+    const draft = await saveDraft({ ...compose, accountId: account.id, id: draftId });
+    setDraftId(draft.id);
+    return draft;
+  }
+
+  async function handleSaveDraft() {
+    setComposeMessage(null);
+    setSavingDraft(true);
+    try {
+      await saveComposeDraft();
+      setComposeMessage("Черновик сохранён на этом устройстве.");
+    } catch (reason) {
+      setComposeMessage(reason instanceof Error ? reason.message : "Не удалось сохранить черновик.");
+    } finally {
+      setSavingDraft(false);
+    }
+  }
+
+  async function handleSendMessage(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const account = accounts?.[0];
+    if (!account || !vaultPassword) {
+      setComposeMessage("Откройте хранилище, чтобы отправить письмо.");
+      return;
+    }
+
+    setComposeMessage(null);
+    setSending(true);
+    try {
+      const draft = await saveComposeDraft();
+      const password = await readCredential(account.id, "smtpPassword", vaultPassword);
+      if (!password) {
+        throw new Error("Данные для отправки не найдены в хранилище.");
+      }
+      await sendMessage(account.id, password, compose);
+      await deleteDraft(draft.id);
+      setComposeOpen(false);
+      setCompose(emptyCompose);
+      setDraftId(null);
+      setSyncMessage("Письмо отправлено через SMTP");
+    } catch (reason) {
+      setComposeMessage(reason instanceof Error ? reason.message : "Не удалось отправить письмо.");
+    } finally {
+      setSending(false);
+    }
+  }
+
   return (
     <TooltipProvider delayDuration={350}>
       <main className="min-h-svh bg-background text-foreground">
@@ -415,7 +492,7 @@ function App() {
                 </IconButton>
               </div>
 
-              <Button className="mt-6 w-full justify-start" onClick={() => setComposeOpen(true)}>
+              <Button className="mt-6 w-full justify-start" onClick={openCompose}>
                 <PenLine />
                 Написать
               </Button>
@@ -608,19 +685,23 @@ function App() {
         </ResizablePanelGroup>
 
         {isComposeOpen ? (
-          <section aria-label="Новое письмо" className="compose-window">
+          <form aria-label="Новое письмо" className="compose-window" onSubmit={handleSendMessage}>
             <div className="flex items-center justify-between border-b px-4 py-3">
               <span className="text-sm font-medium">Новое письмо</span>
-              <Button onClick={() => setComposeOpen(false)} size="icon-xs" variant="ghost">×</Button>
+              <Button onClick={() => setComposeOpen(false)} size="icon-xs" type="button" variant="ghost">×</Button>
             </div>
-            <label className="compose-field"><span>Кому</span><input autoFocus placeholder="Получатель" type="email" /></label>
-            <label className="compose-field"><span>Тема</span><input placeholder="Тема письма" /></label>
-            <textarea aria-label="Текст письма" className="min-h-36 flex-1 resize-none p-4 outline-none" placeholder="Напишите сообщение…" />
+            <label className="compose-field"><span>Кому</span><input autoFocus onChange={(event) => setCompose((current) => ({ ...current, recipients: event.target.value }))} placeholder="name@company.com, colleague@company.com" value={compose.recipients} /></label>
+            <label className="compose-field"><span>Тема</span><input onChange={(event) => setCompose((current) => ({ ...current, subject: event.target.value }))} placeholder="Тема" value={compose.subject} /></label>
+            <textarea aria-label="Текст письма" className="min-h-36 flex-1 resize-none p-4 outline-none" onChange={(event) => setCompose((current) => ({ ...current, body: event.target.value }))} placeholder="Напишите сообщение…" value={compose.body} />
+            {composeMessage ? <p className="px-4 text-sm text-muted-foreground" role="status">{composeMessage}</p> : null}
             <div className="flex items-center justify-between border-t p-3">
-              <Button onClick={() => setComposeOpen(false)}>Отправить</Button>
-              <IconButton label="Прикрепить файл"><Paperclip /></IconButton>
+              <div className="flex gap-2">
+                <Button disabled={isSending} type="submit">{isSending ? "Отправляем…" : "Отправить"}</Button>
+                <Button disabled={isSavingDraft || isSending} onClick={() => void handleSaveDraft()} type="button" variant="secondary">{isSavingDraft ? "Сохраняем…" : "Сохранить черновик"}</Button>
+              </div>
+              <span className="text-xs text-muted-foreground">Без вложений</span>
             </div>
-          </section>
+          </form>
         ) : null}
       </main>
     </TooltipProvider>

@@ -2,11 +2,13 @@ mod mail;
 mod storage;
 
 use mail::{
-    fetch_message_text, save_attachment, sync_inbox, test_connection, MailConnectionInput,
-    MailConnectionStatus, MessageBody,
+    fetch_message_text, save_attachment, send_outgoing_message, sync_inbox, test_connection,
+    MailConnectionInput, MailConnectionStatus, MessageBody, OutgoingMessageInput,
 };
 use serde::{Deserialize, Serialize};
-use storage::{Account, CachedMailbox, CachedMessage, CreateAccountInput, Database};
+use storage::{
+    Account, CachedMailbox, CachedMessage, CreateAccountInput, Database, Draft, SaveDraftInput,
+};
 use tauri::Manager;
 
 struct AppState {
@@ -54,6 +56,14 @@ struct SaveAttachmentInput {
     destination: std::path::PathBuf,
 }
 
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct SendMessageInput {
+    account_id: i64,
+    password: String,
+    message: OutgoingMessageInput,
+}
+
 #[tauri::command]
 fn list_accounts(state: tauri::State<'_, AppState>) -> Result<Vec<Account>, String> {
     state.database.list_accounts()
@@ -70,6 +80,16 @@ fn create_account(
 #[tauri::command]
 fn delete_account(account_id: i64, state: tauri::State<'_, AppState>) -> Result<(), String> {
     state.database.delete_account(account_id)
+}
+
+#[tauri::command]
+fn save_draft(input: SaveDraftInput, state: tauri::State<'_, AppState>) -> Result<Draft, String> {
+    state.database.save_draft(input)
+}
+
+#[tauri::command]
+fn delete_draft(draft_id: i64, state: tauri::State<'_, AppState>) -> Result<(), String> {
+    state.database.delete_draft(draft_id)
 }
 
 #[tauri::command]
@@ -148,6 +168,27 @@ async fn save_message_attachment(
 }
 
 #[tauri::command]
+async fn send_message(
+    input: SendMessageInput,
+    state: tauri::State<'_, AppState>,
+) -> Result<(), String> {
+    let account = state.database.get_account(input.account_id)?;
+    send_outgoing_message(
+        MailConnectionInput {
+            imap_host: account.imap_host,
+            imap_port: 993,
+            smtp_host: account.smtp_host,
+            smtp_port: 587,
+            username: account.email,
+            password: input.password,
+        },
+        &account.display_name,
+        input.message,
+    )
+    .await
+}
+
+#[tauri::command]
 async fn test_mail_connection(input: MailConnectionInput) -> Result<MailConnectionStatus, String> {
     test_connection(input).await
 }
@@ -195,10 +236,13 @@ pub fn run() {
             list_accounts,
             create_account,
             delete_account,
+            save_draft,
+            delete_draft,
             list_cached_mailboxes,
             list_cached_messages,
             load_message_body,
             save_message_attachment,
+            send_message,
             test_mail_connection,
             sync_account
         ])

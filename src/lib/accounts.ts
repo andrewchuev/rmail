@@ -55,6 +55,24 @@ export type AttachmentMetadata = {
   size: number;
 };
 
+export type Draft = {
+  id: number;
+  recipients: string;
+  subject: string;
+  body: string;
+  updatedAt: string;
+};
+
+export type DraftInput = {
+  id: number | null;
+  accountId: number;
+  recipients: string;
+  subject: string;
+  body: string;
+};
+
+export type OutgoingMessageInput = Omit<DraftInput, "id" | "accountId">;
+
 export async function listAccounts(): Promise<Account[]> {
   if (!isTauri()) {
     return [];
@@ -82,6 +100,22 @@ export async function createAccount(input: CreateAccountInput): Promise<Account>
   }
 
   return invoke<Account>("create_account", { input });
+}
+
+export async function saveDraft(input: DraftInput): Promise<Draft> {
+  return invoke<Draft>("save_draft", { input });
+}
+
+export async function deleteDraft(draftId: number): Promise<void> {
+  return invoke<void>("delete_draft", { draftId });
+}
+
+export async function sendMessage(
+  accountId: number,
+  password: string,
+  message: OutgoingMessageInput,
+): Promise<void> {
+  return invoke<void>("send_message", { input: { accountId, password, message } });
 }
 
 export async function deleteAccount(accountId: number): Promise<void> {

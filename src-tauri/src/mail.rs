@@ -3,7 +3,11 @@ use std::{path::Path, time::Duration};
 use ammonia::{Builder as HtmlSanitizer, UrlRelative};
 use async_native_tls::TlsConnector;
 use futures_util::TryStreamExt;
-use lettre::{transport::smtp::authentication::Credentials, AsyncSmtpTransport, Tokio1Executor};
+use lettre::{
+    message::{header::ContentType, Mailbox, Message},
+    transport::smtp::authentication::Credentials,
+    AsyncSmtpTransport, AsyncTransport, Tokio1Executor,
+};
 use mailparse::{parse_mail, DispositionType, ParsedMail};
 use serde::{Deserialize, Serialize};
 use tokio::{io::AsyncWriteExt, net::TcpStream, time::timeout};
@@ -68,6 +72,14 @@ pub struct AttachmentMetadata {
     pub name: String,
     pub mime_type: String,
     pub size: i64,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OutgoingMessageInput {
+    pub recipients: String,
+    pub subject: String,
+    pub body: String,
 }
 
 pub async fn test_connection(input: MailConnectionInput) -> Result<MailConnectionStatus, String> {
@@ -169,6 +181,24 @@ pub async fn save_attachment(
         .map_err(|_| "Unable to save the attachment file.".to_string())?;
 
     u64::try_from(content.len()).map_err(|_| "Attachment is too large to save.".to_string())
+}
+
+pub async fn send_outgoing_message(
+    input: MailConnectionInput,
+    display_name: &str,
+    message: OutgoingMessageInput,
+) -> Result<(), String> {
+    let input = validate_input(input)?;
+    let message = build_outgoing_message(&input.username, display_name, message)?;
+    let transport = AsyncSmtpTransport::<Tokio1Executor>::starttls_relay(&input.smtp_host)
+        .map_err(|_| "Invalid SMTP server address.".to_string())?
+        .port(input.smtp_port)
+        .credentials(Credentials::new(input.username, input.password))
+        .build::<Tokio1Executor>();
+
+    within_timeout(transport.send(message), "Unable to send the message.")
+        .await
+        .map(|_| ())
 }
 
 async fn fetch_message_source(
@@ -355,6 +385,45 @@ fn attachment_content(parsed: &ParsedMail<'_>, position: usize) -> Option<Vec<u8
         .and_then(|part| part.get_body_raw().ok())
 }
 
+fn build_outgoing_message(
+    sender_address: &str,
+    display_name: &str,
+    input: OutgoingMessageInput,
+) -> Result<Message, String> {
+    let recipients = input
+        .recipients
+        .split([',', ';'])
+        .map(str::trim)
+        .filter(|recipient| !recipient.is_empty())
+        .map(|recipient| recipient.parse::<Mailbox>())
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|_| "Enter valid recipient email addresses.".to_string())?;
+    if recipients.is_empty() {
+        return Err("Enter at least one recipient.".to_string());
+    }
+    if input.body.trim().is_empty() {
+        return Err("Message text cannot be empty.".to_string());
+    }
+
+    let sender = sender_address
+        .parse::<Mailbox>()
+        .map_err(|_| "Sender email address is invalid.".to_string())?;
+    let sender = Mailbox::new(
+        (!display_name.trim().is_empty()).then(|| display_name.trim().to_string()),
+        sender.email,
+    );
+    let mut builder = Message::builder()
+        .from(sender)
+        .subject(input.subject.trim())
+        .header(ContentType::TEXT_PLAIN);
+    for recipient in recipients {
+        builder = builder.to(recipient);
+    }
+    builder
+        .body(input.body)
+        .map_err(|_| "Unable to prepare the message.".to_string())
+}
+
 fn limit_message_text(value: String) -> String {
     value.chars().take(MESSAGE_BODY_CHARACTER_LIMIT).collect()
 }
@@ -426,7 +495,10 @@ fn is_valid_host(host: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::{attachment_content, parse_message, validate_input, MailConnectionInput};
+    use super::{
+        attachment_content, build_outgoing_message, parse_message, validate_input,
+        MailConnectionInput, OutgoingMessageInput,
+    };
     use mailparse::parse_mail;
 
     #[test]
@@ -474,5 +546,22 @@ mod tests {
         assert_eq!(message.attachments.len(), 2);
         assert_eq!(message.attachments[1].position, 1);
         assert_eq!(attachment_content(&parsed, 1), Some(b"second".to_vec()));
+    }
+
+    #[test]
+    fn builds_plain_text_message_for_multiple_recipients() {
+        let message = build_outgoing_message(
+            "sender@example.com",
+            "Sender",
+            OutgoingMessageInput {
+                recipients: "first@example.com; second@example.com".to_string(),
+                subject: "Subject".to_string(),
+                body: "Message body".to_string(),
+            },
+        )
+        .expect("message should build");
+
+        assert_eq!(message.envelope().to().len(), 2);
+        assert!(String::from_utf8_lossy(&message.formatted()).contains("Message body"));
     }
 }

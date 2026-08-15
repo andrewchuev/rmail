@@ -41,6 +41,26 @@ pub struct CachedMessage {
     pub is_read: bool,
 }
 
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SaveDraftInput {
+    pub id: Option<i64>,
+    pub account_id: i64,
+    pub recipients: String,
+    pub subject: String,
+    pub body: String,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Draft {
+    pub id: i64,
+    pub recipients: String,
+    pub subject: String,
+    pub body: String,
+    pub updated_at: String,
+}
+
 pub struct Database {
     connection: Mutex<Connection>,
 }
@@ -102,6 +122,56 @@ impl Database {
                 },
             )
             .map_err(|_| "Account was not found.".to_string())
+    }
+
+    pub fn save_draft(&self, input: SaveDraftInput) -> Result<Draft, String> {
+        let input = validate_draft(input)?;
+        let connection = self.connection.lock().map_err(|error| error.to_string())?;
+        let id = if let Some(id) = input.id {
+            let changed = connection
+                .execute(
+                    "UPDATE drafts SET recipients = ?1, subject = ?2, body = ?3, updated_at = CURRENT_TIMESTAMP
+                     WHERE id = ?4 AND account_id = ?5",
+                    params![input.recipients, input.subject, input.body, id, input.account_id],
+                )
+                .map_err(|error| error.to_string())?;
+            if changed == 0 {
+                return Err("Draft was not found.".to_string());
+            }
+            id
+        } else {
+            connection
+                .execute(
+                    "INSERT INTO drafts (account_id, recipients, subject, body) VALUES (?1, ?2, ?3, ?4)",
+                    params![input.account_id, input.recipients, input.subject, input.body],
+                )
+                .map_err(|error| error.to_string())?;
+            connection.last_insert_rowid()
+        };
+
+        connection
+            .query_row(
+                "SELECT id, recipients, subject, body, updated_at FROM drafts WHERE id = ?1",
+                params![id],
+                |row| {
+                    Ok(Draft {
+                        id: row.get(0)?,
+                        recipients: row.get(1)?,
+                        subject: row.get(2)?,
+                        body: row.get(3)?,
+                        updated_at: row.get(4)?,
+                    })
+                },
+            )
+            .map_err(|_| "Draft was not found.".to_string())
+    }
+
+    pub fn delete_draft(&self, draft_id: i64) -> Result<(), String> {
+        let connection = self.connection.lock().map_err(|error| error.to_string())?;
+        connection
+            .execute("DELETE FROM drafts WHERE id = ?1", params![draft_id])
+            .map_err(|error| error.to_string())?;
+        Ok(())
     }
 
     pub fn list_cached_mailboxes(&self, account_id: i64) -> Result<Vec<CachedMailbox>, String> {
@@ -442,6 +512,14 @@ impl Database {
                      PRIMARY KEY (account_id, mailbox_path, uid),
                      FOREIGN KEY (account_id, mailbox_path, uid)
                        REFERENCES messages(account_id, mailbox_path, uid) ON DELETE CASCADE
+                 );
+                 CREATE TABLE IF NOT EXISTS drafts (
+                     id INTEGER PRIMARY KEY,
+                     account_id INTEGER NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
+                     recipients TEXT NOT NULL,
+                     subject TEXT NOT NULL,
+                     body TEXT NOT NULL,
+                     updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
                  );",
             )
             .map_err(|error| error.to_string())
@@ -478,9 +556,26 @@ fn validate_input(input: CreateAccountInput) -> Result<CreateAccountInput, Strin
     Ok(input)
 }
 
+fn validate_draft(input: SaveDraftInput) -> Result<SaveDraftInput, String> {
+    if input.recipients.len() > 10_000
+        || input.subject.len() > 10_000
+        || input.body.len() > 1_000_000
+    {
+        return Err("Draft is too large to save.".to_string());
+    }
+
+    Ok(SaveDraftInput {
+        id: input.id,
+        account_id: input.account_id,
+        recipients: input.recipients.trim().to_string(),
+        subject: input.subject.trim().to_string(),
+        body: input.body,
+    })
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{CreateAccountInput, Database};
+    use super::{CreateAccountInput, Database, SaveDraftInput};
     use crate::mail::{InboxSnapshot, MailboxSnapshot, MessageBody, MessageSnapshot};
 
     #[test]
@@ -579,5 +674,41 @@ mod tests {
                 .unread_count,
             1
         );
+    }
+
+    #[test]
+    fn saves_and_updates_local_drafts() {
+        let database = Database::in_memory().expect("database should initialize");
+        let account = database
+            .create_account(CreateAccountInput {
+                email: "hello@example.com".to_string(),
+                display_name: "RMail".to_string(),
+                imap_host: "imap.example.com".to_string(),
+                smtp_host: "smtp.example.com".to_string(),
+            })
+            .expect("account should be created");
+        let draft = database
+            .save_draft(SaveDraftInput {
+                id: None,
+                account_id: account.id,
+                recipients: " person@example.com ".to_string(),
+                subject: " Subject ".to_string(),
+                body: "Draft body".to_string(),
+            })
+            .expect("draft should save");
+        let updated = database
+            .save_draft(SaveDraftInput {
+                id: Some(draft.id),
+                account_id: account.id,
+                recipients: draft.recipients,
+                subject: "Updated".to_string(),
+                body: draft.body,
+            })
+            .expect("draft should update");
+
+        assert_eq!(updated.subject, "Updated");
+        database
+            .delete_draft(updated.id)
+            .expect("draft should delete");
     }
 }
