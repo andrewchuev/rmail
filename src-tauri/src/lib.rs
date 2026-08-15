@@ -24,8 +24,13 @@ fn create_account(
 pub fn run() {
     tauri::Builder::default()
         .setup(|app| {
-            let database_path = app.path().app_local_data_dir()?.join("rmail.sqlite3");
+            let app_data_dir = app.path().app_local_data_dir()?;
+            let database_path = app_data_dir.join("rmail.sqlite3");
+            let salt_path = app_data_dir.join("stronghold-salt.txt");
             let database = Database::open(&database_path).map_err(std::io::Error::other)?;
+
+            app.handle()
+                .plugin(tauri_plugin_stronghold::Builder::with_argon2(&salt_path).build())?;
             app.manage(AppState { database });
             Ok(())
         })

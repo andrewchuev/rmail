@@ -1,0 +1,2 @@
+[env]
+SODIUM_DISABLE_PIE = "1"
