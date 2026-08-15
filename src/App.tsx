@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState, useTransition, type FormEvent, type ReactNode } from "react";
-import { Archive, ChevronDown, Clock3, Inbox, MoreHorizontal, Paperclip, PenLine, Plus, Search, Settings, Trash2 } from "lucide-react";
+import { Archive, ArrowLeft, ChevronDown, Clock3, Inbox, LayoutTemplate, List, MoreHorizontal, Paperclip, PenLine, Plus, Search, Settings, Trash2 } from "lucide-react";
 import { save } from "@tauri-apps/plugin-dialog";
 import { isPermissionGranted, requestPermission, sendNotification } from "@tauri-apps/plugin-notification";
 import { listen } from "@tauri-apps/api/event";
@@ -12,6 +12,7 @@ import {
   ResizablePanel,
   ResizablePanelGroup,
 } from "@/components/ui/resizable";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import {
   Tooltip,
@@ -112,6 +113,7 @@ function App() {
   const [loadError, setLoadError] = useState<string | null>(null);
   const [mailboxes, setMailboxes] = useState<CachedMailbox[]>([]);
   const [cachedMessages, setCachedMessages] = useState<CachedMessage[]>([]);
+  const [layoutMode, setLayoutMode] = useState<"default" | "compact">("default");
   const [activeAccountId, setActiveAccountId] = useState<number | null>(null);
   const [activeFolder, setActiveFolder] = useState("INBOX");
   const [selectedMessageKey, setSelectedMessageKey] = useState<string | null>(null);
@@ -505,10 +507,196 @@ function App() {
     );
   }
 
+  const renderMessageList = () => (
+    <ScrollArea className="min-h-0 flex-1">
+      <div className="p-2">
+                  {visibleMessages.length ? (
+                    visibleMessages.map((message) => (
+                      <button
+                        className="message-row"
+                        data-selected={selectedMessageKey === messageKey(message)}
+                        key={messageKey(message)}
+                        onClick={() => {
+                          setSelectedMessageKey(messageKey(message));
+                          setContentMode("text");
+                        }}
+                        type="button"
+                      >
+                        <div className={`flex ${layoutMode === "compact" ? "items-center gap-4" : "items-start gap-3"}`}>
+                          <span className={`size-2 shrink-0 rounded-full bg-primary opacity-0 data-[unread=true]:opacity-100 ${layoutMode === "compact" ? "" : "mt-1"}`} data-unread={!message.isRead} />
+                          {layoutMode === "compact" ? (
+                            <div className="min-w-0 flex-1 flex items-center gap-4 text-left">
+                              <p className="w-64 shrink-0 truncate text-sm font-medium">{message.sender}</p>
+                              <p className="flex-1 truncate text-sm" data-unread={!message.isRead}>
+                                {message.subject} <span className="text-muted-foreground font-normal ml-2">— {message.accountDisplayName} · {folderLabel(message.mailboxPath)}</span>
+                              </p>
+                              <time className="shrink-0 text-xs text-muted-foreground">{message.date}</time>
+                            </div>
+                          ) : (
+                            <div className="min-w-0 flex-1 text-left">
+                              <div className="flex items-center gap-3">
+                                <p className="truncate text-sm font-medium">{message.sender}</p>
+                                <time className="ml-auto text-xs text-muted-foreground">{message.date}</time>
+                              </div>
+                              <p className="mt-1 truncate text-sm" data-unread={!message.isRead}>{message.subject}</p>
+                              <p className="mt-1 text-xs leading-5 text-muted-foreground">{message.accountDisplayName} · {folderLabel(message.mailboxPath)}</p>
+                            </div>
+                          )}
+                        </div>
+                      </button>
+                    ))
+                  ) : (
+                    <div className="grid min-h-48 place-items-center px-8 text-center text-sm text-muted-foreground">
+                      {query ? "No messages found. Try another search." : "This folder has no synchronized messages yet."}
+                    </div>
+                  )}
+                </div>
+    </ScrollArea>
+  );
+
+  const renderMessageViewer = () => (
+    <ScrollArea className="min-h-0 flex-1">
+      {selectedMessage ? (
+                  <div className="mx-auto max-w-3xl px-8 py-9">
+                    <div className="flex items-start gap-4">
+                    <span className="grid size-10 shrink-0 place-items-center rounded-full bg-violet-100 text-sm font-semibold text-violet-700">
+                      {selectedMessage.sender[0]}
+                    </span>
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-start gap-3">
+                        <div>
+                          <h2 className="text-xl font-semibold tracking-tight">{selectedMessage.subject}</h2>
+                          <p className="mt-2 text-sm font-medium">{selectedMessage.sender}</p>
+                          <p className="text-sm text-muted-foreground">{selectedMessage.accountDisplayName} · {folderLabel(selectedMessage.mailboxPath)}</p>
+                        </div>
+                        <time className="ml-auto shrink-0 text-xs text-muted-foreground">{selectedMessage.date}</time>
+                      </div>
+
+                      <>
+                          {messageBody?.html ? (
+                            <div className="mt-8 flex gap-2">
+                              <Button onClick={() => setContentMode("text")} size="sm" type="button" variant={contentMode === "text" ? "secondary" : "ghost"}>Text</Button>
+                              <Button onClick={() => setContentMode("html")} size="sm" type="button" variant={contentMode === "html" ? "secondary" : "ghost"}>HTML</Button>
+                            </div>
+                          ) : null}
+                          {contentMode === "html" && messageBody?.html ? (
+                            <iframe
+                              className="mt-5 min-h-96 w-full rounded-lg border bg-background"
+                              referrerPolicy="no-referrer"
+                              sandbox=""
+                              srcDoc={messageBody.html}
+                              title="HTML message version"
+                            />
+                          ) : (
+                            <div className="mail-body mt-8 whitespace-pre-wrap break-words text-[0.95rem] leading-7 text-foreground/85">
+                              {isBodyLoading ? "Loading message body…" : bodyError ?? messageBody?.text ?? "Message body is unavailable."}
+                            </div>
+                          )}
+                          {messageBody?.attachments.length ? (
+                            <div className="mt-8 space-y-3">
+                              <div className="flex flex-wrap gap-2">
+                              {messageBody.attachments.map((attachment) => (
+                                <Button
+                                  className="attachment-chip"
+                                  disabled={savingAttachmentPosition !== null}
+                                  key={`${attachment.position}-${attachment.name}`}
+                                  onClick={() => void downloadAttachment(attachment.position, attachment.name)}
+                                  size="sm"
+                                  type="button"
+                                  variant="outline"
+                                >
+                                  <Paperclip className="size-3.5" />
+                                  {savingAttachmentPosition === attachment.position ? "Saving…" : `${attachment.name} · ${attachment.mimeType}`}
+                                </Button>
+                              ))}
+                              </div>
+                              {attachmentMessage ? <p className="text-sm text-muted-foreground" role="status">{attachmentMessage}</p> : null}
+                            </div>
+                          ) : null}
+                        </>
+                      </div>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="grid h-full place-items-center p-8 text-center text-sm text-muted-foreground">
+                    Select a message to view it.
+                  </div>
+                )}
+    </ScrollArea>
+  );
+
   return (
     <TooltipProvider delayDuration={350}>
       <main className="min-h-svh bg-background text-foreground">
-        <ResizablePanelGroup className="min-h-svh" orientation="horizontal">
+        
+          {layoutMode === "compact" ? (
+            <div className="flex h-full w-full flex-col">
+              <header className="flex items-center justify-between border-b px-5 py-3 shadow-sm">
+                <div className="flex items-center gap-3">
+                  {selectedMessage ? (
+                    <IconButton label="Back" onClick={() => setSelectedMessageKey(null)}>
+                      <ArrowLeft />
+                    </IconButton>
+                  ) : null}
+                  <Select
+                    value={activeAccountId === null ? "all" : activeAccountId.toString()}
+                    onValueChange={(val) => {
+                      setActiveAccountId(val === "all" ? null : Number(val));
+                      setActiveFolder("INBOX");
+                      setSelectedMessageKey(null);
+                    }}
+                  >
+                    <SelectTrigger className="w-[200px] border-none bg-transparent shadow-none focus:ring-0 text-base font-semibold">
+                      <SelectValue placeholder="All inboxes" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="all">All inboxes</SelectItem>
+                      {accountList.map((acc) => (
+                        <SelectItem key={acc.id} value={acc.id.toString()}>{acc.displayName}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="flex items-center gap-2">
+                  {!selectedMessage ? (
+                    <div className="relative">
+                      <Search className="absolute left-2.5 top-2.5 size-4 text-muted-foreground" />
+                      <input
+                        className="h-9 rounded-md border border-input bg-transparent px-3 py-1 pl-9 text-sm shadow-sm transition-colors placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                        onChange={(event) => setQuery(event.target.value)}
+                        placeholder="Search..."
+                        type="search"
+                        value={query}
+                      />
+                    </div>
+                  ) : null}
+                  <IconButton label="Default mode" onClick={() => setLayoutMode("default")}>
+                    <LayoutTemplate />
+                  </IconButton>
+                </div>
+              </header>
+              <div className="flex-1 overflow-hidden">
+                {selectedMessage ? (
+                  <article className="flex h-full flex-col">
+                    <header className="flex items-center justify-end border-b px-6 py-2">
+                      <div className="flex gap-1">
+                        <IconButton label="Archive"><Archive /></IconButton>
+                        <IconButton label="Delete"><Trash2 /></IconButton>
+                        <IconButton label="Snooze"><Clock3 /></IconButton>
+                        <IconButton label="More"><MoreHorizontal /></IconButton>
+                      </div>
+                    </header>
+                    {renderMessageViewer()}
+                  </article>
+                ) : (
+                  <section className="flex h-full flex-col">
+                    {renderMessageList()}
+                  </section>
+                )}
+              </div>
+            </div>
+          ) : (
+<ResizablePanelGroup className="min-h-svh" orientation="horizontal">
           <ResizablePanel defaultSize="19%" minSize="16%">
             <aside className="flex h-full min-w-52 flex-col border-r bg-sidebar px-3 py-4">
               <div className="flex items-center justify-between px-2">
@@ -585,7 +773,7 @@ function App() {
                   <span className={`size-2 rounded-full ${syncMessage.startsWith("Sync failed") ? "bg-red-500" : "bg-emerald-500"}`} />
                   {syncMessage.startsWith("Synchronized") ? "Synchronization complete" : syncMessage.startsWith("Sync failed") ? "Synchronization failed" : "Synchronization pending"}
                 </div>
-                {syncMessage}
+                {syncMessage !== "Synchronization pending" ? syncMessage : null}
               </div>
             </aside>
           </ResizablePanel>
@@ -600,9 +788,14 @@ function App() {
                     <p className="text-xs font-medium text-muted-foreground">{activeAccountId === null ? "Unified inbox" : accountList.find((account) => account.id === activeAccountId)?.displayName}</p>
                     <h1 className="mt-0.5 text-lg font-semibold">{activeAccountId === null ? "All inboxes" : folderLabel(activeFolder)}</h1>
                   </div>
-                  <IconButton label="More actions">
-                    <MoreHorizontal />
-                  </IconButton>
+                  <div className="flex gap-1">
+                    <IconButton label="Compact mode" onClick={() => { setLayoutMode("compact"); setActiveAccountId(null); }}>
+                      <List />
+                    </IconButton>
+                    <IconButton label="More actions">
+                      <MoreHorizontal />
+                    </IconButton>
+                  </div>
                 </div>
                 <label className="search-field mt-4">
                   <Search className="size-4" />
@@ -616,40 +809,7 @@ function App() {
                 </label>
               </header>
 
-              <ScrollArea className="min-h-0 flex-1">
-                <div className="p-2">
-                  {visibleMessages.length ? (
-                    visibleMessages.map((message) => (
-                      <button
-                        className="message-row"
-                        data-selected={selectedMessageKey === messageKey(message)}
-                        key={messageKey(message)}
-                        onClick={() => {
-                          setSelectedMessageKey(messageKey(message));
-                          setContentMode("text");
-                        }}
-                        type="button"
-                      >
-                        <div className="flex items-start gap-3">
-                          <span className="mt-1 size-2 shrink-0 rounded-full bg-primary opacity-0 data-[unread=true]:opacity-100" data-unread={!message.isRead} />
-                          <div className="min-w-0 flex-1 text-left">
-                            <div className="flex items-center gap-3">
-                              <p className="truncate text-sm font-medium">{message.sender}</p>
-                              <time className="ml-auto text-xs text-muted-foreground">{message.date}</time>
-                            </div>
-                            <p className="mt-1 truncate text-sm" data-unread={!message.isRead}>{message.subject}</p>
-                            <p className="mt-1 text-xs leading-5 text-muted-foreground">{message.accountDisplayName} · {folderLabel(message.mailboxPath)}</p>
-                          </div>
-                        </div>
-                      </button>
-                    ))
-                  ) : (
-                    <div className="grid min-h-48 place-items-center px-8 text-center text-sm text-muted-foreground">
-                      {query ? "No messages found. Try another search." : "This folder has no synchronized messages yet."}
-                    </div>
-                  )}
-                </div>
-              </ScrollArea>
+              {renderMessageList()}
             </section>
           </ResizablePanel>
 
@@ -666,77 +826,11 @@ function App() {
                 <IconButton label="More"><MoreHorizontal /></IconButton>
               </header>
 
-              <ScrollArea className="min-h-0 flex-1">
-                {selectedMessage ? (
-                  <div className="mx-auto max-w-3xl px-8 py-9">
-                    <div className="flex items-start gap-4">
-                    <span className="grid size-10 shrink-0 place-items-center rounded-full bg-violet-100 text-sm font-semibold text-violet-700">
-                      {selectedMessage.sender[0]}
-                    </span>
-                    <div className="min-w-0 flex-1">
-                      <div className="flex items-start gap-3">
-                        <div>
-                          <h2 className="text-xl font-semibold tracking-tight">{selectedMessage.subject}</h2>
-                          <p className="mt-2 text-sm font-medium">{selectedMessage.sender}</p>
-                          <p className="text-sm text-muted-foreground">{selectedMessage.accountDisplayName} · {folderLabel(selectedMessage.mailboxPath)}</p>
-                        </div>
-                        <time className="ml-auto shrink-0 text-xs text-muted-foreground">{selectedMessage.date}</time>
-                      </div>
-
-                      <>
-                          {messageBody?.html ? (
-                            <div className="mt-8 flex gap-2">
-                              <Button onClick={() => setContentMode("text")} size="sm" type="button" variant={contentMode === "text" ? "secondary" : "ghost"}>Text</Button>
-                              <Button onClick={() => setContentMode("html")} size="sm" type="button" variant={contentMode === "html" ? "secondary" : "ghost"}>HTML</Button>
-                            </div>
-                          ) : null}
-                          {contentMode === "html" && messageBody?.html ? (
-                            <iframe
-                              className="mt-5 min-h-96 w-full rounded-lg border bg-background"
-                              referrerPolicy="no-referrer"
-                              sandbox=""
-                              srcDoc={messageBody.html}
-                              title="HTML message version"
-                            />
-                          ) : (
-                            <div className="mail-body mt-8 whitespace-pre-wrap break-words text-[0.95rem] leading-7 text-foreground/85">
-                              {isBodyLoading ? "Loading message body…" : bodyError ?? messageBody?.text ?? "Message body is unavailable."}
-                            </div>
-                          )}
-                          {messageBody?.attachments.length ? (
-                            <div className="mt-8 space-y-3">
-                              <div className="flex flex-wrap gap-2">
-                              {messageBody.attachments.map((attachment) => (
-                                <Button
-                                  className="attachment-chip"
-                                  disabled={savingAttachmentPosition !== null}
-                                  key={`${attachment.position}-${attachment.name}`}
-                                  onClick={() => void downloadAttachment(attachment.position, attachment.name)}
-                                  size="sm"
-                                  type="button"
-                                  variant="outline"
-                                >
-                                  <Paperclip className="size-3.5" />
-                                  {savingAttachmentPosition === attachment.position ? "Saving…" : `${attachment.name} · ${attachment.mimeType}`}
-                                </Button>
-                              ))}
-                              </div>
-                              {attachmentMessage ? <p className="text-sm text-muted-foreground" role="status">{attachmentMessage}</p> : null}
-                            </div>
-                          ) : null}
-                        </>
-                      </div>
-                    </div>
-                  </div>
-                ) : (
-                  <div className="grid h-full place-items-center p-8 text-center text-sm text-muted-foreground">
-                    Select a message to view it.
-                  </div>
-                )}
-              </ScrollArea>
+              {renderMessageViewer()}
             </article>
           </ResizablePanel>
         </ResizablePanelGroup>
+          )}
 
         {isComposeOpen ? (
           <form aria-label="New message" className="compose-window" onSubmit={handleSendMessage}>
