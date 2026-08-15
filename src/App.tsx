@@ -234,6 +234,7 @@ function App() {
   const [messageBody, setMessageBody] = useState<MessageBody | null>(null);
   const [bodyError, setBodyError] = useState<string | null>(null);
   const [isBodyLoading, setBodyLoading] = useState(false);
+  const [contentMode, setContentMode] = useState<"text" | "html">("text");
 
   const visibleMessages = useMemo(() => {
     const normalizedQuery = query.trim().toLowerCase();
@@ -283,6 +284,7 @@ function App() {
       .then((items) => {
         setCachedMessages(items);
         setSelectedId(items[0]?.uid ?? null);
+        setContentMode("text");
       })
       .catch(() => setSyncMessage("Не удалось загрузить письма из кеша"));
   }, [accounts, activeFolder, syncRevision]);
@@ -442,7 +444,10 @@ function App() {
                         className="message-row"
                         data-selected={selectedId === message.uid}
                         key={message.uid}
-                        onClick={() => setSelectedId(message.uid)}
+                        onClick={() => {
+                          setSelectedId(message.uid);
+                          setContentMode("text");
+                        }}
                         type="button"
                       >
                         <div className="flex items-start gap-3">
@@ -510,9 +515,25 @@ function App() {
                         </form>
                       ) : (
                         <>
-                          <div className="mail-body mt-8 whitespace-pre-wrap break-words text-[0.95rem] leading-7 text-foreground/85">
-                            {isBodyLoading ? "Загружаем текст письма…" : bodyError ?? messageBody?.text ?? "Текст письма недоступен."}
-                          </div>
+                          {messageBody?.html ? (
+                            <div className="mt-8 flex gap-2">
+                              <Button onClick={() => setContentMode("text")} size="sm" type="button" variant={contentMode === "text" ? "secondary" : "ghost"}>Текст</Button>
+                              <Button onClick={() => setContentMode("html")} size="sm" type="button" variant={contentMode === "html" ? "secondary" : "ghost"}>HTML</Button>
+                            </div>
+                          ) : null}
+                          {contentMode === "html" && messageBody?.html ? (
+                            <iframe
+                              className="mt-5 min-h-96 w-full rounded-lg border bg-background"
+                              referrerPolicy="no-referrer"
+                              sandbox=""
+                              srcDoc={messageBody.html}
+                              title="HTML-версия письма"
+                            />
+                          ) : (
+                            <div className="mail-body mt-8 whitespace-pre-wrap break-words text-[0.95rem] leading-7 text-foreground/85">
+                              {isBodyLoading ? "Загружаем текст письма…" : bodyError ?? messageBody?.text ?? "Текст письма недоступен."}
+                            </div>
+                          )}
                           {messageBody?.attachments.length ? (
                             <div className="mt-8 flex flex-wrap gap-2">
                               {messageBody.attachments.map((attachment) => (

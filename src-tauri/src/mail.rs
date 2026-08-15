@@ -1,5 +1,6 @@
 use std::time::Duration;
 
+use ammonia::{Builder as HtmlSanitizer, UrlRelative};
 use async_native_tls::TlsConnector;
 use futures_util::TryStreamExt;
 use lettre::{transport::smtp::authentication::Credentials, AsyncSmtpTransport, Tokio1Executor};
@@ -56,6 +57,7 @@ pub struct InboxSnapshot {
 #[serde(rename_all = "camelCase")]
 pub struct MessageBody {
     pub text: String,
+    pub html: Option<String>,
     pub attachments: Vec<AttachmentMetadata>,
 }
 
@@ -260,9 +262,18 @@ fn parse_message(source: &[u8]) -> Result<MessageBody, String> {
         .find_map(|part| part.get_body().ok())
         .map(limit_message_text)
         .unwrap_or_else(|| "A plain-text version of this message is unavailable.".to_string());
+    let html = parsed
+        .parts()
+        .filter(|part| part.ctype.mimetype.eq_ignore_ascii_case("text/html"))
+        .find_map(|part| part.get_body().ok())
+        .map(sanitize_html);
     let attachments = parsed.parts().filter_map(attachment_metadata).collect();
 
-    Ok(MessageBody { text, attachments })
+    Ok(MessageBody {
+        text,
+        html,
+        attachments,
+    })
 }
 
 fn attachment_metadata(part: &ParsedMail<'_>) -> Option<AttachmentMetadata> {
@@ -285,6 +296,17 @@ fn attachment_metadata(part: &ParsedMail<'_>) -> Option<AttachmentMetadata> {
 
 fn limit_message_text(value: String) -> String {
     value.chars().take(MESSAGE_BODY_CHARACTER_LIMIT).collect()
+}
+
+fn sanitize_html(value: String) -> String {
+    let mut sanitizer = HtmlSanitizer::default();
+    sanitizer
+        .rm_tags(&[
+            "audio", "base", "button", "embed", "form", "iframe", "img", "input", "link", "object",
+            "picture", "source", "video",
+        ])
+        .url_relative(UrlRelative::Deny);
+    sanitizer.clean(&value).to_string()
 }
 
 async fn test_smtp(input: &MailConnectionInput) -> Result<bool, String> {
@@ -343,7 +365,7 @@ fn is_valid_host(host: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::{validate_input, MailConnectionInput};
+    use super::{parse_message, validate_input, MailConnectionInput};
 
     #[test]
     fn rejects_unsafe_server_names() {
@@ -357,5 +379,27 @@ mod tests {
         });
 
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn sanitizes_html_and_preserves_plain_text() {
+        let message = parse_message(
+            b"Content-Type: multipart/alternative; boundary=part\r\n\r\n--part\r\nContent-Type: text/plain\r\n\r\nPlain body\r\n--part\r\nContent-Type: text/html\r\n\r\n<script>alert(1)</script><img src=\"https://tracker.test/pixel\"><p>HTML body</p>\r\n--part--\r\n",
+        )
+        .expect("message should parse");
+
+        assert_eq!(message.text, "Plain body");
+        assert!(message
+            .html
+            .as_deref()
+            .is_some_and(|html| html.contains("HTML body")));
+        assert!(message
+            .html
+            .as_deref()
+            .is_some_and(|html| !html.contains("script")));
+        assert!(message
+            .html
+            .as_deref()
+            .is_some_and(|html| !html.contains("img")));
     }
 }

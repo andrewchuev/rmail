@@ -208,7 +208,25 @@ impl Database {
             .collect::<Result<Vec<_>, _>>()
             .map_err(|error| error.to_string())?;
 
-        Ok(Some(MessageBody { text, attachments }))
+        let html = connection
+            .query_row(
+                "SELECT html FROM message_html
+                 WHERE account_id = ?1 AND mailbox_path = ?2 AND uid = ?3",
+                params![account_id, mailbox_path, uid],
+                |row| row.get(0),
+            )
+            .map(Some)
+            .or_else(|error| match error {
+                rusqlite::Error::QueryReturnedNoRows => Ok(None),
+                error => Err(error),
+            })
+            .map_err(|error| error.to_string())?;
+
+        Ok(Some(MessageBody {
+            text,
+            html,
+            attachments,
+        }))
     }
 
     pub fn store_message_body(
@@ -232,6 +250,22 @@ impl Database {
                 params![account_id, mailbox_path, uid, body.text],
             )
             .map_err(|error| error.to_string())?;
+        transaction
+            .execute(
+                "DELETE FROM message_html
+                 WHERE account_id = ?1 AND mailbox_path = ?2 AND uid = ?3",
+                params![account_id, mailbox_path, uid],
+            )
+            .map_err(|error| error.to_string())?;
+        if let Some(html) = &body.html {
+            transaction
+                .execute(
+                    "INSERT INTO message_html (account_id, mailbox_path, uid, html, cached_at)
+                     VALUES (?1, ?2, ?3, ?4, CURRENT_TIMESTAMP)",
+                    params![account_id, mailbox_path, uid, html],
+                )
+                .map_err(|error| error.to_string())?;
+        }
         transaction
             .execute(
                 "DELETE FROM message_attachments
@@ -397,6 +431,16 @@ impl Database {
                      PRIMARY KEY (account_id, mailbox_path, uid, position),
                      FOREIGN KEY (account_id, mailbox_path, uid)
                        REFERENCES messages(account_id, mailbox_path, uid) ON DELETE CASCADE
+                 );
+                 CREATE TABLE IF NOT EXISTS message_html (
+                     account_id INTEGER NOT NULL,
+                     mailbox_path TEXT NOT NULL,
+                     uid INTEGER NOT NULL,
+                     html TEXT NOT NULL,
+                     cached_at TEXT NOT NULL,
+                     PRIMARY KEY (account_id, mailbox_path, uid),
+                     FOREIGN KEY (account_id, mailbox_path, uid)
+                       REFERENCES messages(account_id, mailbox_path, uid) ON DELETE CASCADE
                  );",
             )
             .map_err(|error| error.to_string())
@@ -504,6 +548,7 @@ mod tests {
                 7,
                 &MessageBody {
                     text: "Cached body".to_string(),
+                    html: Some("<p>Cached HTML</p>".to_string()),
                     attachments: Vec::new(),
                 },
             )
@@ -514,6 +559,7 @@ mod tests {
                 .expect("body should load"),
             Some(MessageBody {
                 text: "Cached body".to_string(),
+                html: Some("<p>Cached HTML</p>".to_string()),
                 attachments: Vec::new(),
             })
         );

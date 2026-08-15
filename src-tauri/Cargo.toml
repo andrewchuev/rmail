@@ -23,6 +23,7 @@ futures-util = "0.3.31"
 lettre = { version = "0.11.23", default-features = false, features = ["smtp-transport", "tokio1-native-tls"] }
 tokio = { version = "1", features = ["rt", "net", "time"] }
 mailparse = "0.16.1"
+ammonia = "4.1.4"
 
 [profile.dev.package.scrypt]
 opt-level = 3

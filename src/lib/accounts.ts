@@ -44,6 +44,7 @@ export type CachedMessage = {
 
 export type MessageBody = {
   text: string;
+  html: string | null;
   attachments: AttachmentMetadata[];
 };
 
