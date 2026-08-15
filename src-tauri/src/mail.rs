@@ -453,6 +453,14 @@ fn format_address(address: &async_imap::imap_proto::types::Address<'_>) -> Strin
 }
 
 fn decode_header(value: &[u8]) -> String {
+    let mut header_bytes = Vec::with_capacity(value.len() + 9);
+    header_bytes.extend_from_slice(b"Subject: ");
+    header_bytes.extend_from_slice(value);
+    
+    if let Ok((parsed, _)) = mailparse::parse_header(&header_bytes) {
+        return parsed.get_value().trim().to_string();
+    }
+    
     String::from_utf8_lossy(value).trim().to_string()
 }
 

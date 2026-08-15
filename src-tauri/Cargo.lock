@@ -347,6 +347,12 @@ dependencies = [
 
 [[package]]
 name = "base64"
+version = "0.13.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9e1b586273c5702936fe7b7d6896644d8be71e6314cfe09d3167c95f712589e8"
+
+[[package]]
+name = "base64"
 version = "0.21.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9d297deb1925b89f2ccc13d7635fa0714f12c87adce1c75356b39ca9b7178567"
@@ -3828,6 +3834,7 @@ dependencies = [
  "tauri-plugin-window-state",
  "tokio",
  "url",
+ "utf7-imap",
  "uuid",
 ]
 
@@ -5461,6 +5468,17 @@ dependencies = [
  "serde",
  "unic-ucd-ident",
  "url",
+]
+
+[[package]]
+name = "utf7-imap"
+version = "0.3.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5e326365261fc2761f0809dfb6032810534a0427bbd8f0edf546f6afeef89f5d"
+dependencies = [
+ "base64 0.13.1",
+ "encoding_rs",
+ "regex",
 ]
 
 [[package]]
