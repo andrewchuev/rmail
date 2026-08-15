@@ -1,7 +1,10 @@
 mod mail;
 mod storage;
 
-use mail::{sync_inbox, test_connection, MailConnectionInput, MailConnectionStatus};
+use mail::{
+    fetch_message_text, sync_inbox, test_connection, MailConnectionInput, MailConnectionStatus,
+    MessageBody,
+};
 use serde::{Deserialize, Serialize};
 use storage::{Account, CachedMailbox, CachedMessage, CreateAccountInput, Database};
 use tauri::Manager;
@@ -29,6 +32,15 @@ struct SyncAccountStatus {
 struct CachedMessagesInput {
     account_id: i64,
     mailbox_path: String,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct LoadMessageBodyInput {
+    account_id: i64,
+    mailbox_path: String,
+    uid: u32,
+    password: String,
 }
 
 #[tauri::command]
@@ -65,6 +77,43 @@ fn list_cached_messages(
     state
         .database
         .list_cached_messages(input.account_id, &input.mailbox_path)
+}
+
+#[tauri::command]
+async fn load_message_body(
+    input: LoadMessageBodyInput,
+    state: tauri::State<'_, AppState>,
+) -> Result<MessageBody, String> {
+    if let Some(text) =
+        state
+            .database
+            .get_cached_message_body(input.account_id, &input.mailbox_path, input.uid)?
+    {
+        return Ok(MessageBody { text });
+    }
+
+    let account = state.database.get_account(input.account_id)?;
+    let body = fetch_message_text(
+        MailConnectionInput {
+            imap_host: account.imap_host,
+            imap_port: 993,
+            smtp_host: account.smtp_host,
+            smtp_port: 587,
+            username: account.email,
+            password: input.password,
+        },
+        &input.mailbox_path,
+        input.uid,
+    )
+    .await?;
+    state.database.store_message_body(
+        input.account_id,
+        &input.mailbox_path,
+        input.uid,
+        &body.text,
+    )?;
+
+    Ok(body)
 }
 
 #[tauri::command]
@@ -116,6 +165,7 @@ pub fn run() {
             delete_account,
             list_cached_mailboxes,
             list_cached_messages,
+            load_message_body,
             test_mail_connection,
             sync_account
         ])

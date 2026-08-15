@@ -19,6 +19,7 @@ import {
   listAccounts,
   listCachedMailboxes,
   listCachedMessages,
+  loadMessageBody,
   syncAccount,
   testMailConnection,
   type Account,
@@ -26,7 +27,7 @@ import {
   type CachedMessage,
   type CreateAccountInput,
 } from "@/lib/accounts";
-import { saveCredentials } from "@/lib/credentials";
+import { readCredential, saveCredentials } from "@/lib/credentials";
 import "./App.css";
 
 function folderLabel(path: string) {
@@ -54,7 +55,7 @@ function IconButton({
   );
 }
 
-function AccountSetup({ onAccountCreated }: { onAccountCreated: (account: Account, password: string) => Promise<void> }) {
+function AccountSetup({ onAccountCreated }: { onAccountCreated: (account: Account, password: string, vaultPassword: string) => Promise<void> }) {
   const [input, setInput] = useState<CreateAccountInput>({
     displayName: "",
     email: "",
@@ -131,7 +132,7 @@ function AccountSetup({ onAccountCreated }: { onAccountCreated: (account: Accoun
         throw new Error("Не удалось сохранить данные для входа. Аккаунт не был добавлен.");
       }
 
-      await onAccountCreated(account, connectionPassword);
+      await onAccountCreated(account, connectionPassword, vaultPassword);
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "Unable to save the account.");
     } finally {
@@ -226,6 +227,12 @@ function App() {
   const [isComposeOpen, setComposeOpen] = useState(false);
   const [syncMessage, setSyncMessage] = useState("Откройте хранилище, чтобы синхронизировать почту");
   const [syncRevision, setSyncRevision] = useState(0);
+  const [vaultPassword, setVaultPassword] = useState("");
+  const [unlockPassword, setUnlockPassword] = useState("");
+  const [unlockError, setUnlockError] = useState<string | null>(null);
+  const [messageBody, setMessageBody] = useState<string | null>(null);
+  const [bodyError, setBodyError] = useState<string | null>(null);
+  const [isBodyLoading, setBodyLoading] = useState(false);
 
   const visibleMessages = useMemo(() => {
     const normalizedQuery = query.trim().toLowerCase();
@@ -279,6 +286,29 @@ function App() {
       .catch(() => setSyncMessage("Не удалось загрузить письма из кеша"));
   }, [accounts, activeFolder, syncRevision]);
 
+  useEffect(() => {
+    const account = accounts?.[0];
+    const message = cachedMessages.find((item) => item.uid === selectedId);
+    if (!account || !message || !vaultPassword) {
+      setMessageBody(null);
+      return;
+    }
+
+    setBodyLoading(true);
+    setBodyError(null);
+    void readCredential(account.id, "imapPassword", vaultPassword)
+      .then((password) => {
+        if (!password) {
+          throw new Error("Данные для входа не найдены в хранилище.");
+        }
+
+        return loadMessageBody(account.id, activeFolder, message.uid, password);
+      })
+      .then((body) => setMessageBody(body.text))
+      .catch((reason) => setBodyError(reason instanceof Error ? reason.message : "Не удалось загрузить письмо."))
+      .finally(() => setBodyLoading(false));
+  }, [accounts, activeFolder, cachedMessages, selectedId, vaultPassword]);
+
   if (loadError) {
     return <main className="grid min-h-svh place-items-center p-6 text-sm text-destructive">{loadError}</main>;
   }
@@ -290,7 +320,8 @@ function App() {
   if (accounts.length === 0) {
     return (
       <AccountSetup
-        onAccountCreated={async (account, password) => {
+        onAccountCreated={async (account, password, newVaultPassword) => {
+          setVaultPassword(newVaultPassword);
           setAccounts([account]);
 
           try {
@@ -303,6 +334,26 @@ function App() {
         }}
       />
     );
+  }
+
+  async function unlockVault(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const account = accounts?.[0];
+    if (!account) {
+      return;
+    }
+    setUnlockError(null);
+
+    try {
+      const password = await readCredential(account.id, "imapPassword", unlockPassword);
+      if (!password) {
+        throw new Error("Данные для входа не найдены в хранилище.");
+      }
+      setVaultPassword(unlockPassword);
+      setUnlockPassword("");
+    } catch {
+      setUnlockError("Не удалось открыть хранилище. Проверьте пароль.");
+    }
   }
 
   return (
@@ -446,9 +497,21 @@ function App() {
                         <time className="ml-auto shrink-0 text-xs text-muted-foreground">{selectedMessage.date}</time>
                       </div>
 
-                      <div className="mail-body mt-8 whitespace-pre-line text-[0.95rem] leading-7 text-foreground/85">
-                        Полный текст письма будет загружаться по запросу. Сейчас в локальном кеше доступны папки и заголовки.
-                      </div>
+                      {!vaultPassword ? (
+                        <form className="mt-8 max-w-sm space-y-3" onSubmit={unlockVault}>
+                          <p className="text-sm leading-6 text-muted-foreground">Откройте хранилище, чтобы загрузить текст письма.</p>
+                          <label className="setup-field">
+                            <span>Пароль хранилища</span>
+                            <input onChange={(event) => setUnlockPassword(event.target.value)} required type="password" value={unlockPassword} />
+                          </label>
+                          {unlockError ? <p className="text-sm text-destructive" role="alert">{unlockError}</p> : null}
+                          <Button type="submit">Открыть хранилище</Button>
+                        </form>
+                      ) : (
+                        <div className="mail-body mt-8 whitespace-pre-wrap break-words text-[0.95rem] leading-7 text-foreground/85">
+                          {isBodyLoading ? "Загружаем текст письма…" : bodyError ?? messageBody ?? "Текст письма недоступен."}
+                        </div>
+                      )}
                     </div>
                   </div>
                   </div>

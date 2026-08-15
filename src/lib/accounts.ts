@@ -42,6 +42,10 @@ export type CachedMessage = {
   isRead: boolean;
 };
 
+export type MessageBody = {
+  text: string;
+};
+
 export async function listAccounts(): Promise<Account[]> {
   if (!isTauri()) {
     return [];
@@ -90,5 +94,16 @@ export async function listCachedMessages(
 ): Promise<CachedMessage[]> {
   return invoke<CachedMessage[]>("list_cached_messages", {
     input: { accountId, mailboxPath },
+  });
+}
+
+export async function loadMessageBody(
+  accountId: number,
+  mailboxPath: string,
+  uid: number,
+  password: string,
+): Promise<MessageBody> {
+  return invoke<MessageBody>("load_message_body", {
+    input: { accountId, mailboxPath, uid, password },
   });
 }

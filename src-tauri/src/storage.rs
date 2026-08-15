@@ -164,6 +164,50 @@ impl Database {
         Ok(messages)
     }
 
+    pub fn get_cached_message_body(
+        &self,
+        account_id: i64,
+        mailbox_path: &str,
+        uid: u32,
+    ) -> Result<Option<String>, String> {
+        let connection = self.connection.lock().map_err(|error| error.to_string())?;
+        connection
+            .query_row(
+                "SELECT body FROM message_bodies
+                 WHERE account_id = ?1 AND mailbox_path = ?2 AND uid = ?3",
+                params![account_id, mailbox_path, uid],
+                |row| row.get(0),
+            )
+            .map(Some)
+            .or_else(|error| match error {
+                rusqlite::Error::QueryReturnedNoRows => Ok(None),
+                error => Err(error),
+            })
+            .map_err(|error| error.to_string())
+    }
+
+    pub fn store_message_body(
+        &self,
+        account_id: i64,
+        mailbox_path: &str,
+        uid: u32,
+        body: &str,
+    ) -> Result<(), String> {
+        let connection = self.connection.lock().map_err(|error| error.to_string())?;
+        connection
+            .execute(
+                "INSERT INTO message_bodies (account_id, mailbox_path, uid, body, cached_at)
+                 VALUES (?1, ?2, ?3, ?4, CURRENT_TIMESTAMP)
+                 ON CONFLICT(account_id, mailbox_path, uid) DO UPDATE SET
+                   body = excluded.body,
+                   cached_at = CURRENT_TIMESTAMP",
+                params![account_id, mailbox_path, uid, body],
+            )
+            .map_err(|error| error.to_string())?;
+
+        Ok(())
+    }
+
     pub fn create_account(&self, input: CreateAccountInput) -> Result<Account, String> {
         let input = validate_input(input)?;
         let connection = self.connection.lock().map_err(|error| error.to_string())?;
@@ -279,6 +323,16 @@ impl Database {
                      is_read INTEGER NOT NULL,
                      synced_at TEXT NOT NULL,
                      PRIMARY KEY (account_id, mailbox_path, uid)
+                 );
+                 CREATE TABLE IF NOT EXISTS message_bodies (
+                     account_id INTEGER NOT NULL,
+                     mailbox_path TEXT NOT NULL,
+                     uid INTEGER NOT NULL,
+                     body TEXT NOT NULL,
+                     cached_at TEXT NOT NULL,
+                     PRIMARY KEY (account_id, mailbox_path, uid),
+                     FOREIGN KEY (account_id, mailbox_path, uid)
+                       REFERENCES messages(account_id, mailbox_path, uid) ON DELETE CASCADE
                  );",
             )
             .map_err(|error| error.to_string())
@@ -341,7 +395,6 @@ mod tests {
                 .len(),
             1
         );
-
         database
             .delete_account(account.id)
             .expect("account should be deleted");
@@ -380,6 +433,15 @@ mod tests {
                 },
             )
             .expect("snapshot should persist");
+        database
+            .store_message_body(account.id, "INBOX", 7, "Cached body")
+            .expect("body should persist");
+        assert_eq!(
+            database
+                .get_cached_message_body(account.id, "INBOX", 7)
+                .expect("body should load"),
+            Some("Cached body".to_string())
+        );
 
         let count: i64 = {
             let connection = database.connection.lock().expect("connection should lock");

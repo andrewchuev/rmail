@@ -8,6 +8,7 @@ use tokio::{net::TcpStream, time::timeout};
 
 const CONNECTION_TIMEOUT: Duration = Duration::from_secs(15);
 const MESSAGE_SYNC_LIMIT: u32 = 50;
+const MESSAGE_BODY_CHARACTER_LIMIT: usize = 200_000;
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -48,6 +49,12 @@ pub struct MessageSnapshot {
 pub struct InboxSnapshot {
     pub mailboxes: Vec<MailboxSnapshot>,
     pub messages: Vec<MessageSnapshot>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MessageBody {
+    pub text: String,
 }
 
 pub async fn test_connection(input: MailConnectionInput) -> Result<MailConnectionStatus, String> {
@@ -105,6 +112,35 @@ pub async fn sync_inbox(input: MailConnectionInput) -> Result<InboxSnapshot, Str
         mailboxes,
         messages,
     })
+}
+
+pub async fn fetch_message_text(
+    input: MailConnectionInput,
+    mailbox_path: &str,
+    uid: u32,
+) -> Result<MessageBody, String> {
+    let input = validate_input(input)?;
+    if mailbox_path.trim().is_empty() {
+        return Err("Mailbox path is required.".to_string());
+    }
+
+    let mut session = connect_session(&input).await?;
+    within_timeout(session.select(mailbox_path), "Unable to open the mailbox.").await?;
+    let messages = within_timeout(
+        session.uid_fetch(uid.to_string(), "(BODY.PEEK[TEXT])"),
+        "Unable to fetch the message body.",
+    )
+    .await?
+    .try_collect::<Vec<_>>()
+    .await
+    .map_err(|_| "Unable to fetch the message body.".to_string())?;
+    let text = messages
+        .into_iter()
+        .find_map(|message| message.text().map(decode_message_text))
+        .ok_or_else(|| "Message body is unavailable.".to_string())?;
+
+    let _ = session.logout().await;
+    Ok(MessageBody { text })
 }
 
 async fn test_imap(input: &MailConnectionInput) -> Result<Vec<String>, String> {
@@ -203,6 +239,13 @@ fn format_address(address: &async_imap::imap_proto::types::Address<'_>) -> Strin
 
 fn decode_header(value: &[u8]) -> String {
     String::from_utf8_lossy(value).trim().to_string()
+}
+
+fn decode_message_text(value: &[u8]) -> String {
+    String::from_utf8_lossy(value)
+        .chars()
+        .take(MESSAGE_BODY_CHARACTER_LIMIT)
+        .collect()
 }
 
 async fn test_smtp(input: &MailConnectionInput) -> Result<bool, String> {
