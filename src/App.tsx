@@ -35,7 +35,7 @@ import {
   type Draft,
   type MessageBody,
 } from "@/lib/accounts";
-import { readCredential, saveCredentials } from "@/lib/credentials";
+import { deleteCredentials, readCredential, saveCredentials } from "@/lib/credentials";
 import { connectionErrorMessage } from "@/lib/errors";
 import "./App.css";
 
@@ -152,6 +152,7 @@ function AccountSetup({ onAccountCreated }: { onAccountCreated: (account: Accoun
       try {
         await saveCredentials(account.id, connectionPassword, vaultPassword);
       } catch {
+        await deleteCredentials(account.id, vaultPassword).catch(() => undefined);
         await deleteAccount(account.id).catch(() => undefined);
         throw new Error("Не удалось сохранить данные для входа. Аккаунт не был добавлен.");
       }
@@ -286,9 +287,23 @@ function App() {
     cachedMessages.find((message) => message.uid === selectedId) ?? null;
 
   useEffect(() => {
+    let ignore = false;
+
     void listAccounts()
-      .then(setAccounts)
-      .catch((reason) => setLoadError(reason instanceof Error ? reason.message : "Unable to load accounts."));
+      .then((items) => {
+        if (!ignore) {
+          setAccounts(items);
+        }
+      })
+      .catch((reason) => {
+        if (!ignore) {
+          setLoadError(reason instanceof Error ? reason.message : "Unable to load accounts.");
+        }
+      });
+
+    return () => {
+      ignore = true;
+    };
   }, []);
 
   useEffect(() => {
@@ -296,13 +311,25 @@ function App() {
     if (!account) {
       return;
     }
+    let ignore = false;
 
     void listCachedMailboxes(account.id)
       .then((items) => {
+        if (ignore) {
+          return;
+        }
         setMailboxes(items);
         setActiveFolder((current) => items.some((mailbox) => mailbox.path === current) ? current : (items[0]?.path ?? "INBOX"));
       })
-      .catch(() => setSyncMessage("Не удалось загрузить локальный кеш"));
+      .catch(() => {
+        if (!ignore) {
+          setSyncMessage("Не удалось загрузить локальный кеш");
+        }
+      });
+
+    return () => {
+      ignore = true;
+    };
   }, [accounts, syncRevision]);
 
   useEffect(() => {
@@ -310,15 +337,27 @@ function App() {
     if (!account) {
       return;
     }
+    let ignore = false;
 
     void listCachedMessages(account.id, activeFolder)
       .then((items) => {
+        if (ignore) {
+          return;
+        }
         setCachedMessages(items);
         setSelectedId(items[0]?.uid ?? null);
         setContentMode("text");
         setAttachmentMessage(null);
       })
-      .catch(() => setSyncMessage("Не удалось загрузить письма из кеша"));
+      .catch(() => {
+        if (!ignore) {
+          setSyncMessage("Не удалось загрузить письма из кеша");
+        }
+      });
+
+    return () => {
+      ignore = true;
+    };
   }, [accounts, activeFolder, syncRevision]);
 
   useEffect(() => {
@@ -326,9 +365,13 @@ function App() {
     const message = cachedMessages.find((item) => item.uid === selectedId);
     if (!account || !message || !vaultPassword) {
       setMessageBody(null);
+      setBodyError(null);
+      setBodyLoading(false);
       return;
     }
+    let ignore = false;
 
+    setMessageBody(null);
     setBodyLoading(true);
     setBodyError(null);
     void readCredential(account.id, "imapPassword", vaultPassword)
@@ -339,9 +382,25 @@ function App() {
 
         return loadMessageBody(account.id, activeFolder, message.uid, password);
       })
-      .then(setMessageBody)
-      .catch((reason) => setBodyError(reason instanceof Error ? reason.message : "Не удалось загрузить письмо."))
-      .finally(() => setBodyLoading(false));
+      .then((body) => {
+        if (!ignore) {
+          setMessageBody(body);
+        }
+      })
+      .catch((reason) => {
+        if (!ignore) {
+          setBodyError(reason instanceof Error ? reason.message : "Не удалось загрузить письмо.");
+        }
+      })
+      .finally(() => {
+        if (!ignore) {
+          setBodyLoading(false);
+        }
+      });
+
+    return () => {
+      ignore = true;
+    };
   }, [accounts, activeFolder, cachedMessages, selectedId, vaultPassword]);
 
   if (loadError) {

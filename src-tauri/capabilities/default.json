@@ -8,6 +8,7 @@
   "permissions": [
     "core:default",
     "stronghold:default",
+    "stronghold:allow-remove-store-record",
     "dialog:default",
     "log:default"
   ]

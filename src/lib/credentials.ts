@@ -3,6 +3,7 @@ import { Client, Stronghold } from "@tauri-apps/plugin-stronghold";
 
 const clientName = "rmail";
 const vaultFileName = "credentials.hold";
+type CredentialName = "imapPassword" | "smtpPassword";
 
 async function openVault(masterPassword: string) {
   if (!masterPassword) {
@@ -22,7 +23,7 @@ async function openVault(masterPassword: string) {
   return { client, stronghold };
 }
 
-function credentialKey(accountId: number, name: "imapPassword" | "smtpPassword") {
+function credentialKey(accountId: number, name: CredentialName) {
   return `account:${accountId}:${name}`;
 }
 
@@ -42,9 +43,9 @@ export async function saveCredentials(
 
 export async function readCredential(
   accountId: number,
-  name: "imapPassword" | "smtpPassword",
+  name: CredentialName,
   masterPassword: string,
-) {
+): Promise<string | null> {
   const { client } = await openVault(masterPassword);
   const value = await client.getStore().get(credentialKey(accountId, name));
 
@@ -53,4 +54,15 @@ export async function readCredential(
   }
 
   return new TextDecoder().decode(new Uint8Array(value));
+}
+
+export async function deleteCredentials(accountId: number, masterPassword: string): Promise<void> {
+  const { client, stronghold } = await openVault(masterPassword);
+  const store = client.getStore();
+
+  await Promise.all([
+    store.remove(credentialKey(accountId, "imapPassword")),
+    store.remove(credentialKey(accountId, "smtpPassword")),
+  ]);
+  await stronghold.save();
 }

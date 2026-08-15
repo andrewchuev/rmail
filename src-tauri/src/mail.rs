@@ -15,6 +15,7 @@ use tokio::{io::AsyncWriteExt, net::TcpStream, time::timeout};
 const CONNECTION_TIMEOUT: Duration = Duration::from_secs(15);
 const MESSAGE_SYNC_LIMIT: u32 = 50;
 const MESSAGE_BODY_CHARACTER_LIMIT: usize = 200_000;
+const MESSAGE_SOURCE_BYTE_LIMIT: u64 = 25 * 1024 * 1024;
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -178,7 +179,7 @@ async fn sync_mailbox_headers(
         .max(1);
     let sequence = format!("{start}:*");
     let messages = within_timeout(
-        session.uid_fetch(sequence, "(UID FLAGS ENVELOPE RFC822.SIZE)"),
+        session.fetch(sequence, "(UID FLAGS ENVELOPE RFC822.SIZE)"),
         "Unable to fetch mailbox messages.",
     )
     .await?
@@ -266,6 +267,18 @@ async fn fetch_message_source(
 
     let mut session = connect_session(&input).await?;
     within_timeout(session.select(mailbox_path), "Unable to open the mailbox.").await?;
+    let message_size = within_timeout(
+        session.uid_fetch(uid.to_string(), "(RFC822.SIZE)"),
+        "Unable to inspect the message size.",
+    )
+    .await?
+    .try_collect::<Vec<_>>()
+    .await
+    .map_err(|_| "Unable to inspect the message size.".to_string())?
+    .into_iter()
+    .find_map(|message| message.size)
+    .ok_or_else(|| "Message size is unavailable.".to_string())?;
+    ensure_message_source_size(u64::from(message_size))?;
     let messages = within_timeout(
         session.uid_fetch(uid.to_string(), "(BODY.PEEK[])"),
         "Unable to fetch the message body.",
@@ -278,6 +291,9 @@ async fn fetch_message_source(
         .into_iter()
         .find_map(|message| message.body().map(|body| body.to_vec()))
         .ok_or_else(|| "Message body is unavailable.".to_string())?;
+    ensure_message_source_size(
+        u64::try_from(source.len()).map_err(|_| "Message is too large to download.".to_string())?,
+    )?;
 
     let _ = session.logout().await;
     Ok(source)
@@ -485,6 +501,14 @@ fn limit_message_text(value: String) -> String {
     value.chars().take(MESSAGE_BODY_CHARACTER_LIMIT).collect()
 }
 
+fn ensure_message_source_size(size: u64) -> Result<(), String> {
+    if size > MESSAGE_SOURCE_BYTE_LIMIT {
+        return Err("Message is too large to download.".to_string());
+    }
+
+    Ok(())
+}
+
 fn sanitize_html(value: String) -> String {
     let mut sanitizer = HtmlSanitizer::default();
     sanitizer
@@ -553,8 +577,8 @@ fn is_valid_host(host: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::{
-        attachment_content, build_outgoing_message, parse_message, validate_input,
-        MailConnectionInput, OutgoingMessageInput,
+        attachment_content, build_outgoing_message, ensure_message_source_size, parse_message,
+        validate_input, MailConnectionInput, OutgoingMessageInput, MESSAGE_SOURCE_BYTE_LIMIT,
     };
     use mailparse::parse_mail;
 
@@ -620,5 +644,11 @@ mod tests {
 
         assert_eq!(message.envelope().to().len(), 2);
         assert!(String::from_utf8_lossy(&message.formatted()).contains("Message body"));
+    }
+
+    #[test]
+    fn rejects_message_sources_over_the_download_limit() {
+        assert!(ensure_message_source_size(MESSAGE_SOURCE_BYTE_LIMIT).is_ok());
+        assert!(ensure_message_source_size(MESSAGE_SOURCE_BYTE_LIMIT + 1).is_err());
     }
 }
