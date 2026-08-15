@@ -119,10 +119,10 @@ function AccountCredentialsEditor({
     let connectionWasVerified = false;
     try {
       const previousPassword = await readCredential(account.id, "imapPassword");
-      if (!previousPassword) {
-        throw new Error("The current account password was not found in the vault.");
-      }
       const connectionPassword = password || previousPassword;
+      if (!connectionPassword) {
+        throw new Error("The current account password was not found in the vault. Please enter it again.");
+      }
       connectionWasAttempted = true;
       await testMailConnection({
         imapHost: input.imapHost,
@@ -143,7 +143,7 @@ function AccountCredentialsEditor({
         setPassword("");
         setMessage("Account settings were verified and saved.");
       } catch (reason) {
-        if (password) {
+        if (password && previousPassword) {
           await saveCredentials(account.id, previousPassword).catch(() => undefined);
         }
         throw reason;
