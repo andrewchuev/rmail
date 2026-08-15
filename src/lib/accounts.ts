@@ -10,6 +10,20 @@ export type Account = {
 
 export type CreateAccountInput = Omit<Account, "id">;
 
+export type MailConnectionInput = {
+  imapHost: string;
+  imapPort: number;
+  smtpHost: string;
+  smtpPort: number;
+  username: string;
+  password: string;
+};
+
+export type MailConnectionStatus = {
+  mailboxes: string[];
+  smtpReady: boolean;
+};
+
 export async function listAccounts(): Promise<Account[]> {
   if (!isTauri()) {
     return [];
@@ -24,4 +38,12 @@ export async function createAccount(input: CreateAccountInput): Promise<Account>
   }
 
   return invoke<Account>("create_account", { input });
+}
+
+export async function testMailConnection(input: MailConnectionInput): Promise<MailConnectionStatus> {
+  if (!isTauri()) {
+    throw new Error("Connection testing is available in the desktop application.");
+  }
+
+  return invoke<MailConnectionStatus>("test_mail_connection", { input });
 }

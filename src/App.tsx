@@ -27,7 +27,13 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
-import { createAccount, listAccounts, type Account, type CreateAccountInput } from "@/lib/accounts";
+import {
+  createAccount,
+  listAccounts,
+  testMailConnection,
+  type Account,
+  type CreateAccountInput,
+} from "@/lib/accounts";
 import "./App.css";
 
 type Folder = "Входящие" | "Отправленные" | "Черновики" | "В архиве" | "Корзина";
@@ -126,15 +132,51 @@ function AccountSetup({ onAccountCreated }: { onAccountCreated: (account: Accoun
     smtpHost: "",
   });
   const [error, setError] = useState<string | null>(null);
+  const [connectionPassword, setConnectionPassword] = useState("");
+  const [connectionMessage, setConnectionMessage] = useState<string | null>(null);
+  const [isTesting, setTesting] = useState(false);
+  const [isConnectionVerified, setConnectionVerified] = useState(false);
   const [isSubmitting, setSubmitting] = useState(false);
 
   function updateField(field: keyof CreateAccountInput, value: string) {
     setInput((current) => ({ ...current, [field]: value }));
+    setConnectionVerified(false);
+    setConnectionMessage(null);
+  }
+
+  async function testConnection() {
+    setError(null);
+    setConnectionMessage(null);
+    setConnectionVerified(false);
+    setTesting(true);
+
+    try {
+      const status = await testMailConnection({
+        imapHost: input.imapHost,
+        imapPort: 993,
+        smtpHost: input.smtpHost,
+        smtpPort: 587,
+        username: input.email,
+        password: connectionPassword,
+      });
+      setConnectionVerified(true);
+      setConnectionMessage(`Подключение подтверждено: найдено папок — ${status.mailboxes.length}.`);
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "Unable to test the connection.");
+    } finally {
+      setTesting(false);
+    }
   }
 
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setError(null);
+
+    if (!isConnectionVerified) {
+      setError("Сначала проверьте подключение.");
+      return;
+    }
+
     setSubmitting(true);
 
     try {
@@ -153,7 +195,7 @@ function AccountSetup({ onAccountCreated }: { onAccountCreated: (account: Accoun
         <p className="mt-7 text-sm font-medium text-primary">Первый аккаунт</p>
         <h1 id="setup-title" className="mt-1 text-2xl font-semibold tracking-tight">Подключите почту</h1>
         <p className="mt-3 text-sm leading-6 text-muted-foreground">
-          Сохраним только настройки подключения. Пароль и токены будут добавлены в защищённое хранилище на следующем шаге.
+          Проверьте доступ к IMAP и SMTP. Пароль используется только для проверки и пока не сохраняется.
         </p>
 
         <form className="mt-7 space-y-4" onSubmit={submit}>
@@ -175,6 +217,24 @@ function AccountSetup({ onAccountCreated }: { onAccountCreated: (account: Accoun
               <input onChange={(event) => updateField("smtpHost", event.target.value)} placeholder="smtp.company.com" required value={input.smtpHost} />
             </label>
           </div>
+          <label className="setup-field">
+            <span>Пароль почты</span>
+            <input
+              onChange={(event) => {
+                setConnectionPassword(event.target.value);
+                setConnectionVerified(false);
+                setConnectionMessage(null);
+              }}
+              required
+              type="password"
+              value={connectionPassword}
+            />
+            <small>IMAP: SSL/TLS, порт 993 · SMTP: STARTTLS, порт 587</small>
+          </label>
+          <Button className="w-full" disabled={isTesting} onClick={() => void testConnection()} type="button" variant="secondary">
+            {isTesting ? "Проверяем подключение…" : "Проверить подключение"}
+          </Button>
+          {connectionMessage ? <p className="text-sm text-emerald-700 dark:text-emerald-400" role="status">{connectionMessage}</p> : null}
           {error ? <p className="text-sm text-destructive" role="alert">{error}</p> : null}
           <Button className="mt-2 w-full" disabled={isSubmitting} type="submit">
             {isSubmitting ? "Сохраняем…" : "Продолжить"}

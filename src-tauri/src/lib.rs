@@ -1,5 +1,7 @@
+mod mail;
 mod storage;
 
+use mail::{test_connection, MailConnectionInput, MailConnectionStatus};
 use storage::{Account, CreateAccountInput, Database};
 use tauri::Manager;
 
@@ -20,6 +22,11 @@ fn create_account(
     state.database.create_account(input)
 }
 
+#[tauri::command]
+async fn test_mail_connection(input: MailConnectionInput) -> Result<MailConnectionStatus, String> {
+    test_connection(input).await
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -34,7 +41,11 @@ pub fn run() {
             app.manage(AppState { database });
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![list_accounts, create_account])
+        .invoke_handler(tauri::generate_handler![
+            list_accounts,
+            create_account,
+            test_mail_connection
+        ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }
