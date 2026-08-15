@@ -21,9 +21,10 @@ async-imap = { version = "0.11.3", default-features = false, features = ["runtim
 async-native-tls = { version = "0.6.0", default-features = false, features = ["runtime-tokio"] }
 futures-util = "0.3.31"
 lettre = { version = "0.11.23", default-features = false, features = ["smtp-transport", "tokio1-native-tls"] }
-tokio = { version = "1", features = ["rt", "net", "time"] }
+tokio = { version = "1", features = ["rt", "net", "time", "fs", "io-util"] }
 mailparse = "0.16.1"
 ammonia = "4.1.4"
+tauri-plugin-dialog = "2"
 
 [profile.dev.package.scrypt]
 opt-level = 3

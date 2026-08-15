@@ -49,6 +49,7 @@ export type MessageBody = {
 };
 
 export type AttachmentMetadata = {
+  position: number;
   name: string;
   mimeType: string;
   size: number;
@@ -60,6 +61,19 @@ export async function listAccounts(): Promise<Account[]> {
   }
 
   return invoke<Account[]>("list_accounts");
+}
+
+export async function saveMessageAttachment(
+  accountId: number,
+  mailboxPath: string,
+  uid: number,
+  attachmentPosition: number,
+  password: string,
+  destination: string,
+): Promise<number> {
+  return invoke<number>("save_message_attachment", {
+    input: { accountId, mailboxPath, uid, attachmentPosition, password, destination },
+  });
 }
 
 export async function createAccount(input: CreateAccountInput): Promise<Account> {

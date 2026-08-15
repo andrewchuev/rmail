@@ -2,8 +2,8 @@ mod mail;
 mod storage;
 
 use mail::{
-    fetch_message_text, sync_inbox, test_connection, MailConnectionInput, MailConnectionStatus,
-    MessageBody,
+    fetch_message_text, save_attachment, sync_inbox, test_connection, MailConnectionInput,
+    MailConnectionStatus, MessageBody,
 };
 use serde::{Deserialize, Serialize};
 use storage::{Account, CachedMailbox, CachedMessage, CreateAccountInput, Database};
@@ -41,6 +41,17 @@ struct LoadMessageBodyInput {
     mailbox_path: String,
     uid: u32,
     password: String,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct SaveAttachmentInput {
+    account_id: i64,
+    mailbox_path: String,
+    uid: u32,
+    attachment_position: usize,
+    password: String,
+    destination: std::path::PathBuf,
 }
 
 #[tauri::command]
@@ -114,6 +125,29 @@ async fn load_message_body(
 }
 
 #[tauri::command]
+async fn save_message_attachment(
+    input: SaveAttachmentInput,
+    state: tauri::State<'_, AppState>,
+) -> Result<u64, String> {
+    let account = state.database.get_account(input.account_id)?;
+    save_attachment(
+        MailConnectionInput {
+            imap_host: account.imap_host,
+            imap_port: 993,
+            smtp_host: account.smtp_host,
+            smtp_port: 587,
+            username: account.email,
+            password: input.password,
+        },
+        &input.mailbox_path,
+        input.uid,
+        input.attachment_position,
+        &input.destination,
+    )
+    .await
+}
+
+#[tauri::command]
 async fn test_mail_connection(input: MailConnectionInput) -> Result<MailConnectionStatus, String> {
     test_connection(input).await
 }
@@ -145,6 +179,7 @@ async fn sync_account(
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        .plugin(tauri_plugin_dialog::init())
         .setup(|app| {
             let app_data_dir = app.path().app_local_data_dir()?;
             let database_path = app_data_dir.join("rmail.sqlite3");
@@ -163,6 +198,7 @@ pub fn run() {
             list_cached_mailboxes,
             list_cached_messages,
             load_message_body,
+            save_message_attachment,
             test_mail_connection,
             sync_account
         ])

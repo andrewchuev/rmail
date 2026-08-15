@@ -190,7 +190,7 @@ impl Database {
         };
         let mut statement = connection
             .prepare(
-                "SELECT name, mime_type, size
+                "SELECT position, name, mime_type, size
                  FROM message_attachments
                  WHERE account_id = ?1 AND mailbox_path = ?2 AND uid = ?3
                  ORDER BY position ASC",
@@ -199,9 +199,10 @@ impl Database {
         let attachments = statement
             .query_map(params![account_id, mailbox_path, uid], |row| {
                 Ok(crate::mail::AttachmentMetadata {
-                    name: row.get(0)?,
-                    mime_type: row.get(1)?,
-                    size: row.get(2)?,
+                    position: row.get::<_, i64>(0)? as usize,
+                    name: row.get(1)?,
+                    mime_type: row.get(2)?,
+                    size: row.get(3)?,
                 })
             })
             .map_err(|error| error.to_string())?
@@ -273,7 +274,7 @@ impl Database {
                 params![account_id, mailbox_path, uid],
             )
             .map_err(|error| error.to_string())?;
-        for (position, attachment) in body.attachments.iter().enumerate() {
+        for attachment in &body.attachments {
             transaction
                 .execute(
                     "INSERT INTO message_attachments (account_id, mailbox_path, uid, position, name, mime_type, size)
@@ -282,7 +283,7 @@ impl Database {
                         account_id,
                         mailbox_path,
                         uid,
-                        position as i64,
+                        attachment.position as i64,
                         attachment.name,
                         attachment.mime_type,
                         attachment.size

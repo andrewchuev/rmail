@@ -1,4 +1,4 @@
-use std::time::Duration;
+use std::{path::Path, time::Duration};
 
 use ammonia::{Builder as HtmlSanitizer, UrlRelative};
 use async_native_tls::TlsConnector;
@@ -6,7 +6,7 @@ use futures_util::TryStreamExt;
 use lettre::{transport::smtp::authentication::Credentials, AsyncSmtpTransport, Tokio1Executor};
 use mailparse::{parse_mail, DispositionType, ParsedMail};
 use serde::{Deserialize, Serialize};
-use tokio::{net::TcpStream, time::timeout};
+use tokio::{io::AsyncWriteExt, net::TcpStream, time::timeout};
 
 const CONNECTION_TIMEOUT: Duration = Duration::from_secs(15);
 const MESSAGE_SYNC_LIMIT: u32 = 50;
@@ -64,6 +64,7 @@ pub struct MessageBody {
 #[derive(Debug, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AttachmentMetadata {
+    pub position: usize,
     pub name: String,
     pub mime_type: String,
     pub size: i64,
@@ -131,6 +132,50 @@ pub async fn fetch_message_text(
     mailbox_path: &str,
     uid: u32,
 ) -> Result<MessageBody, String> {
+    let source = fetch_message_source(input, mailbox_path, uid).await?;
+    let body = parse_message(&source)?;
+    Ok(body)
+}
+
+pub async fn save_attachment(
+    input: MailConnectionInput,
+    mailbox_path: &str,
+    uid: u32,
+    attachment_position: usize,
+    destination: &Path,
+) -> Result<u64, String> {
+    if !destination.is_absolute() || destination.file_name().is_none() {
+        return Err("Choose a valid file location.".to_string());
+    }
+
+    let source = fetch_message_source(input, mailbox_path, uid).await?;
+    let parsed = parse_mail(&source).map_err(|_| "Unable to parse the message.".to_string())?;
+    let content = attachment_content(&parsed, attachment_position)
+        .ok_or_else(|| "Attachment is unavailable.".to_string())?;
+
+    let mut file = tokio::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(destination)
+        .await
+        .map_err(|_| {
+            "Unable to create the attachment file. Choose another name or location.".to_string()
+        })?;
+    file.write_all(&content)
+        .await
+        .map_err(|_| "Unable to save the attachment file.".to_string())?;
+    file.flush()
+        .await
+        .map_err(|_| "Unable to save the attachment file.".to_string())?;
+
+    u64::try_from(content.len()).map_err(|_| "Attachment is too large to save.".to_string())
+}
+
+async fn fetch_message_source(
+    input: MailConnectionInput,
+    mailbox_path: &str,
+    uid: u32,
+) -> Result<Vec<u8>, String> {
     let input = validate_input(input)?;
     if mailbox_path.trim().is_empty() {
         return Err("Mailbox path is required.".to_string());
@@ -150,10 +195,9 @@ pub async fn fetch_message_text(
         .into_iter()
         .find_map(|message| message.body().map(|body| body.to_vec()))
         .ok_or_else(|| "Message body is unavailable.".to_string())?;
-    let body = parse_message(&source)?;
 
     let _ = session.logout().await;
-    Ok(body)
+    Ok(source)
 }
 
 async fn test_imap(input: &MailConnectionInput) -> Result<Vec<String>, String> {
@@ -267,7 +311,15 @@ fn parse_message(source: &[u8]) -> Result<MessageBody, String> {
         .filter(|part| part.ctype.mimetype.eq_ignore_ascii_case("text/html"))
         .find_map(|part| part.get_body().ok())
         .map(sanitize_html);
-    let attachments = parsed.parts().filter_map(attachment_metadata).collect();
+    let attachments = parsed
+        .parts()
+        .filter_map(attachment_metadata)
+        .enumerate()
+        .map(|(position, mut attachment)| {
+            attachment.position = position;
+            attachment
+        })
+        .collect();
 
     Ok(MessageBody {
         text,
@@ -288,10 +340,19 @@ fn attachment_metadata(part: &ParsedMail<'_>) -> Option<AttachmentMetadata> {
     }
 
     Some(AttachmentMetadata {
+        position: 0,
         name: name.cloned().unwrap_or_else(|| "Attachment".to_string()),
         mime_type: part.ctype.mimetype.clone(),
         size: i64::try_from(part.get_body_raw().ok()?.len()).ok()?,
     })
+}
+
+fn attachment_content(parsed: &ParsedMail<'_>, position: usize) -> Option<Vec<u8>> {
+    parsed
+        .parts()
+        .filter(|part| attachment_metadata(part).is_some())
+        .nth(position)
+        .and_then(|part| part.get_body_raw().ok())
 }
 
 fn limit_message_text(value: String) -> String {
@@ -365,7 +426,8 @@ fn is_valid_host(host: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::{parse_message, validate_input, MailConnectionInput};
+    use super::{attachment_content, parse_message, validate_input, MailConnectionInput};
+    use mailparse::parse_mail;
 
     #[test]
     fn rejects_unsafe_server_names() {
@@ -401,5 +463,16 @@ mod tests {
             .html
             .as_deref()
             .is_some_and(|html| !html.contains("img")));
+    }
+
+    #[test]
+    fn finds_attachment_by_stable_position() {
+        let source = b"Content-Type: multipart/mixed; boundary=part\r\n\r\n--part\r\nContent-Type: text/plain\r\n\r\nPlain body\r\n--part\r\nContent-Type: application/octet-stream; name=first.bin\r\nContent-Disposition: attachment; filename=first.bin\r\nContent-Transfer-Encoding: base64\r\n\r\nZmlyc3Q=\r\n--part\r\nContent-Type: application/octet-stream; name=second.bin\r\nContent-Disposition: attachment; filename=second.bin\r\nContent-Transfer-Encoding: base64\r\n\r\nc2Vjb25k\r\n--part--\r\n";
+        let message = parse_message(source).expect("message should parse");
+        let parsed = parse_mail(source).expect("message should parse");
+
+        assert_eq!(message.attachments.len(), 2);
+        assert_eq!(message.attachments[1].position, 1);
+        assert_eq!(attachment_content(&parsed, 1), Some(b"second".to_vec()));
     }
 }

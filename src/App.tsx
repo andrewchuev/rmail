@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState, type FormEvent, type ReactNode } from "react";
 import { Archive, ChevronDown, Clock3, Inbox, MoreHorizontal, Paperclip, PenLine, Search, Settings2, Trash2 } from "lucide-react";
+import { save } from "@tauri-apps/plugin-dialog";
 import { Button } from "@/components/ui/button";
 import {
   ResizableHandle,
@@ -20,6 +21,7 @@ import {
   listCachedMailboxes,
   listCachedMessages,
   loadMessageBody,
+  saveMessageAttachment,
   syncAccount,
   testMailConnection,
   type Account,
@@ -33,6 +35,10 @@ import "./App.css";
 
 function folderLabel(path: string) {
   return path.toUpperCase() === "INBOX" ? "Входящие" : path;
+}
+
+function attachmentFileName(name: string) {
+  return name.replace(/[\\/]/g, "_").trim() || "attachment";
 }
 
 function IconButton({
@@ -235,6 +241,8 @@ function App() {
   const [bodyError, setBodyError] = useState<string | null>(null);
   const [isBodyLoading, setBodyLoading] = useState(false);
   const [contentMode, setContentMode] = useState<"text" | "html">("text");
+  const [savingAttachmentPosition, setSavingAttachmentPosition] = useState<number | null>(null);
+  const [attachmentMessage, setAttachmentMessage] = useState<string | null>(null);
 
   const visibleMessages = useMemo(() => {
     const normalizedQuery = query.trim().toLowerCase();
@@ -285,6 +293,7 @@ function App() {
         setCachedMessages(items);
         setSelectedId(items[0]?.uid ?? null);
         setContentMode("text");
+        setAttachmentMessage(null);
       })
       .catch(() => setSyncMessage("Не удалось загрузить письма из кеша"));
   }, [accounts, activeFolder, syncRevision]);
@@ -356,6 +365,34 @@ function App() {
       setUnlockPassword("");
     } catch {
       setUnlockError("Не удалось открыть хранилище. Проверьте пароль.");
+    }
+  }
+
+  async function downloadAttachment(position: number, name: string) {
+    const account = accounts?.[0];
+    const message = selectedMessage;
+    if (!account || !message || !vaultPassword) {
+      return;
+    }
+
+    setAttachmentMessage(null);
+    const destination = await save({ defaultPath: attachmentFileName(name) });
+    if (!destination) {
+      return;
+    }
+
+    setSavingAttachmentPosition(position);
+    try {
+      const password = await readCredential(account.id, "imapPassword", vaultPassword);
+      if (!password) {
+        throw new Error("Данные для входа не найдены в хранилище.");
+      }
+      await saveMessageAttachment(account.id, activeFolder, message.uid, position, password, destination);
+      setAttachmentMessage(`Вложение «${name}» сохранено.`);
+    } catch (reason) {
+      setAttachmentMessage(reason instanceof Error ? reason.message : "Не удалось сохранить вложение.");
+    } finally {
+      setSavingAttachmentPosition(null);
     }
   }
 
@@ -535,13 +572,24 @@ function App() {
                             </div>
                           )}
                           {messageBody?.attachments.length ? (
-                            <div className="mt-8 flex flex-wrap gap-2">
+                            <div className="mt-8 space-y-3">
+                              <div className="flex flex-wrap gap-2">
                               {messageBody.attachments.map((attachment) => (
-                                <span className="attachment-chip" key={`${attachment.name}-${attachment.size}`}>
+                                <Button
+                                  className="attachment-chip"
+                                  disabled={savingAttachmentPosition !== null}
+                                  key={`${attachment.position}-${attachment.name}`}
+                                  onClick={() => void downloadAttachment(attachment.position, attachment.name)}
+                                  size="sm"
+                                  type="button"
+                                  variant="outline"
+                                >
                                   <Paperclip className="size-3.5" />
-                                  {attachment.name} · {attachment.mimeType}
-                                </span>
+                                  {savingAttachmentPosition === attachment.position ? "Сохраняем…" : `${attachment.name} · ${attachment.mimeType}`}
+                                </Button>
                               ))}
+                              </div>
+                              {attachmentMessage ? <p className="text-sm text-muted-foreground" role="status">{attachmentMessage}</p> : null}
                             </div>
                           ) : null}
                         </>
