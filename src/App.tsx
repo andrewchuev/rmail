@@ -4,6 +4,7 @@ import { save } from "@tauri-apps/plugin-dialog";
 import { isPermissionGranted, requestPermission, sendNotification } from "@tauri-apps/plugin-notification";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
+import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { Button } from "@/components/ui/button";
 import { AccountSetup } from "@/components/AccountSetup";
 import { SettingsPage } from "@/components/SettingsPage";
@@ -204,6 +205,45 @@ function App() {
       unlisten = listener;
     });
     return () => unlisten?.();
+  }, []);
+
+  useEffect(() => {
+    let zoomLevel = parseFloat(localStorage.getItem("ui-zoom-level") ?? "1.0");
+    const applyZoom = (z: number) => {
+      zoomLevel = Math.max(0.2, Math.min(5.0, z));
+      localStorage.setItem("ui-zoom-level", zoomLevel.toString());
+      void getCurrentWebview().setZoom(zoomLevel);
+    };
+
+    // Restore on mount
+    if (zoomLevel !== 1.0) {
+      applyZoom(zoomLevel);
+    }
+
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.ctrlKey || e.metaKey) {
+        if (e.key === "=" || e.key === "+") {
+          applyZoom(zoomLevel + 0.1);
+        } else if (e.key === "-") {
+          applyZoom(zoomLevel - 0.1);
+        } else if (e.key === "0") {
+          applyZoom(1.0);
+        }
+      }
+    };
+
+    const handleWheel = (e: WheelEvent) => {
+      if (e.ctrlKey) {
+        applyZoom(zoomLevel - (e.deltaY > 0 ? 0.1 : -0.1));
+      }
+    };
+
+    window.addEventListener("keydown", handleKeyDown);
+    window.addEventListener("wheel", handleWheel, { passive: false });
+    return () => {
+      window.removeEventListener("keydown", handleKeyDown);
+      window.removeEventListener("wheel", handleWheel);
+    };
   }, []);
 
   useEffect(() => {

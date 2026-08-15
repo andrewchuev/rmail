@@ -119,21 +119,34 @@ fn list_accounts(state: tauri::State<'_, AppState>) -> Result<Vec<Account>, Stri
 
 #[tauri::command]
 fn save_credentials(account_id: i64, password: String) -> Result<(), String> {
-    let imap_entry = Entry::new(CREDENTIAL_SERVICE, &format!("account:{}:imapPassword", account_id))
+    let imap_entry = Entry::new(
+        CREDENTIAL_SERVICE,
+        &format!("account:{}:imapPassword", account_id),
+    )
+    .map_err(|error| error.to_string())?;
+    imap_entry
+        .set_password(&password)
         .map_err(|error| error.to_string())?;
-    imap_entry.set_password(&password).map_err(|error| error.to_string())?;
 
-    let smtp_entry = Entry::new(CREDENTIAL_SERVICE, &format!("account:{}:smtpPassword", account_id))
+    let smtp_entry = Entry::new(
+        CREDENTIAL_SERVICE,
+        &format!("account:{}:smtpPassword", account_id),
+    )
+    .map_err(|error| error.to_string())?;
+    smtp_entry
+        .set_password(&password)
         .map_err(|error| error.to_string())?;
-    smtp_entry.set_password(&password).map_err(|error| error.to_string())?;
 
     Ok(())
 }
 
 #[tauri::command]
 fn read_credential(account_id: i64, name: String) -> Result<Option<String>, String> {
-    let entry = Entry::new(CREDENTIAL_SERVICE, &format!("account:{}:{}", account_id, name))
-        .map_err(|error| error.to_string())?;
+    let entry = Entry::new(
+        CREDENTIAL_SERVICE,
+        &format!("account:{}:{}", account_id, name),
+    )
+    .map_err(|error| error.to_string())?;
     match entry.get_password() {
         Ok(password) => Ok(Some(password)),
         Err(keyring::Error::NoEntry) => Ok(None),
@@ -143,12 +156,18 @@ fn read_credential(account_id: i64, name: String) -> Result<Option<String>, Stri
 
 #[tauri::command]
 fn delete_credentials(account_id: i64) -> Result<(), String> {
-    let imap_entry = Entry::new(CREDENTIAL_SERVICE, &format!("account:{}:imapPassword", account_id))
-        .map_err(|error| error.to_string())?;
+    let imap_entry = Entry::new(
+        CREDENTIAL_SERVICE,
+        &format!("account:{}:imapPassword", account_id),
+    )
+    .map_err(|error| error.to_string())?;
     let _ = imap_entry.delete_credential();
 
-    let smtp_entry = Entry::new(CREDENTIAL_SERVICE, &format!("account:{}:smtpPassword", account_id))
-        .map_err(|error| error.to_string())?;
+    let smtp_entry = Entry::new(
+        CREDENTIAL_SERVICE,
+        &format!("account:{}:smtpPassword", account_id),
+    )
+    .map_err(|error| error.to_string())?;
     let _ = smtp_entry.delete_credential();
 
     Ok(())
@@ -330,6 +349,7 @@ async fn sync_account(
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        .plugin(tauri_plugin_window_state::Builder::new().build())
         .plugin(
             tauri_plugin_log::Builder::new()
                 .level(tauri_plugin_log::log::LevelFilter::Info)
