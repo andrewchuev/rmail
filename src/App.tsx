@@ -262,7 +262,7 @@ function App() {
           setCachedMessages((current) => cachedMessagesEqual(current, items) ? current : items);
           setSelectedMessageKey((current) => current && items.some((message) => messageKey(message) === current)
             ? current
-            : (items[0] ? messageKey(items[0]) : null));
+            : (layoutMode === "default" && items[0] ? messageKey(items[0]) : null));
         });
       })
       .catch(() => {
@@ -274,7 +274,7 @@ function App() {
     return () => {
       ignore = true;
     };
-  }, [accounts, activeAccountId, activeFolder, syncRevision]);
+  }, [accounts, activeAccountId, activeFolder, syncRevision, layoutMode]);
 
   useEffect(() => {
     const message = selectedMessage;
