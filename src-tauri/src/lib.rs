@@ -1,5 +1,8 @@
+mod google_oauth;
 mod mail;
 mod storage;
+
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use keyring::Entry;
 use mail::{
@@ -9,6 +12,7 @@ use mail::{
 use serde::{Deserialize, Serialize};
 use storage::{
     Account, CachedMailbox, CachedMessage, CreateAccountInput, Database, Draft, SaveDraftInput,
+    UpdateAccountInput,
 };
 use tauri::{
     menu::{Menu, MenuItem, PredefinedMenuItem},
@@ -18,6 +22,10 @@ use tauri::{
 
 struct AppState {
     database: Database,
+}
+
+struct WindowSettings {
+    hide_on_close: AtomicBool,
 }
 
 const VAULT_PASSWORD_SERVICE: &str = "com.rmail.desktop";
@@ -76,6 +84,26 @@ struct SendMessageInput {
     message: OutgoingMessageInput,
 }
 
+async fn mail_connection(
+    account: &Account,
+    password: String,
+) -> Result<MailConnectionInput, String> {
+    let oauth_access_token = if account.auth_type == "gmail_oauth" {
+        Some(google_oauth::access_token(&account.email).await?)
+    } else {
+        None
+    };
+    Ok(MailConnectionInput {
+        imap_host: account.imap_host.clone(),
+        imap_port: 993,
+        smtp_host: account.smtp_host.clone(),
+        smtp_port: 587,
+        username: account.email.clone(),
+        password,
+        oauth_access_token,
+    })
+}
+
 #[tauri::command]
 fn diagnostic_log_path(app: tauri::AppHandle) -> Result<String, String> {
     app.path()
@@ -111,6 +139,11 @@ fn save_stored_vault_password(password: String) -> Result<(), String> {
 }
 
 #[tauri::command]
+fn set_hide_on_close(enabled: bool, settings: tauri::State<'_, WindowSettings>) {
+    settings.hide_on_close.store(enabled, Ordering::Relaxed);
+}
+
+#[tauri::command]
 fn create_account(
     input: CreateAccountInput,
     state: tauri::State<'_, AppState>,
@@ -119,7 +152,55 @@ fn create_account(
 }
 
 #[tauri::command]
+fn update_account(
+    input: UpdateAccountInput,
+    state: tauri::State<'_, AppState>,
+) -> Result<Account, String> {
+    state.database.update_account(input)
+}
+
+#[tauri::command]
+async fn connect_gmail(state: tauri::State<'_, AppState>) -> Result<Account, String> {
+    let authorization = google_oauth::authorize().await?;
+    let account = state
+        .database
+        .create_gmail_account(&authorization.email, &authorization.display_name)?;
+    if let Err(error) =
+        google_oauth::store_refresh_token(&authorization.email, &authorization.refresh_token)
+    {
+        let _ = state.database.delete_account(account.id);
+        return Err(error);
+    }
+    Ok(account)
+}
+
+#[tauri::command]
+async fn reconnect_gmail(
+    account_id: i64,
+    state: tauri::State<'_, AppState>,
+) -> Result<Account, String> {
+    let account = state.database.get_account(account_id)?;
+    if account.auth_type != "gmail_oauth" {
+        return Err("The selected account does not use Google OAuth.".to_string());
+    }
+
+    let authorization = google_oauth::authorize().await?;
+    if !authorization.email.eq_ignore_ascii_case(&account.email) {
+        return Err(format!(
+            "Authorize {} to reconnect this account.",
+            account.email
+        ));
+    }
+    google_oauth::store_refresh_token(&account.email, &authorization.refresh_token)?;
+    Ok(account)
+}
+
+#[tauri::command]
 fn delete_account(account_id: i64, state: tauri::State<'_, AppState>) -> Result<(), String> {
+    let account = state.database.get_account(account_id)?;
+    if account.auth_type == "gmail_oauth" {
+        google_oauth::delete_refresh_token(&account.email)?;
+    }
     state.database.delete_account(account_id)
 }
 
@@ -170,19 +251,8 @@ async fn load_message_body(
     }
 
     let account = state.database.get_account(input.account_id)?;
-    let body = fetch_message_text(
-        MailConnectionInput {
-            imap_host: account.imap_host,
-            imap_port: 993,
-            smtp_host: account.smtp_host,
-            smtp_port: 587,
-            username: account.email,
-            password: input.password,
-        },
-        &input.mailbox_path,
-        input.uid,
-    )
-    .await?;
+    let connection = mail_connection(&account, input.password).await?;
+    let body = fetch_message_text(connection, &input.mailbox_path, input.uid).await?;
     state
         .database
         .store_message_body(input.account_id, &input.mailbox_path, input.uid, &body)?;
@@ -196,15 +266,9 @@ async fn save_message_attachment(
     state: tauri::State<'_, AppState>,
 ) -> Result<u64, String> {
     let account = state.database.get_account(input.account_id)?;
+    let connection = mail_connection(&account, input.password).await?;
     save_attachment(
-        MailConnectionInput {
-            imap_host: account.imap_host,
-            imap_port: 993,
-            smtp_host: account.smtp_host,
-            smtp_port: 587,
-            username: account.email,
-            password: input.password,
-        },
+        connection,
         &input.mailbox_path,
         input.uid,
         input.attachment_position,
@@ -219,19 +283,8 @@ async fn send_message(
     state: tauri::State<'_, AppState>,
 ) -> Result<(), String> {
     let account = state.database.get_account(input.account_id)?;
-    send_outgoing_message(
-        MailConnectionInput {
-            imap_host: account.imap_host,
-            imap_port: 993,
-            smtp_host: account.smtp_host,
-            smtp_port: 587,
-            username: account.email,
-            password: input.password,
-        },
-        &account.display_name,
-        input.message,
-    )
-    .await
+    let connection = mail_connection(&account, input.password).await?;
+    send_outgoing_message(connection, &account.display_name, input.message).await
 }
 
 #[tauri::command]
@@ -245,15 +298,8 @@ async fn sync_account(
     state: tauri::State<'_, AppState>,
 ) -> Result<SyncAccountStatus, String> {
     let account = state.database.get_account(input.account_id)?;
-    let snapshot = sync_mailboxes(MailConnectionInput {
-        imap_host: account.imap_host,
-        imap_port: 993,
-        smtp_host: account.smtp_host,
-        smtp_port: 587,
-        username: account.email,
-        password: input.password,
-    })
-    .await?;
+    let connection = mail_connection(&account, input.password).await?;
+    let snapshot = sync_mailboxes(connection).await?;
     let status = SyncAccountStatus {
         mailbox_count: snapshot.mailboxes.len(),
         message_count: snapshot.messages.len(),
@@ -266,7 +312,6 @@ async fn sync_account(
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
-        .plugin(tauri_plugin_notification::init())
         .plugin(
             tauri_plugin_log::Builder::new()
                 .level(tauri_plugin_log::log::LevelFilter::Info)
@@ -321,10 +366,20 @@ pub fn run() {
                 })
                 .build(app)?;
             app.manage(AppState { database });
+            app.manage(WindowSettings {
+                hide_on_close: AtomicBool::new(true),
+            });
             Ok(())
         })
         .on_window_event(|window, event| {
             if let WindowEvent::CloseRequested { api, .. } = event {
+                if !window
+                    .state::<WindowSettings>()
+                    .hide_on_close
+                    .load(Ordering::Relaxed)
+                {
+                    return;
+                }
                 api.prevent_close();
                 let _ = window.hide();
             }
@@ -334,7 +389,11 @@ pub fn run() {
             list_accounts,
             load_stored_vault_password,
             save_stored_vault_password,
+            set_hide_on_close,
             create_account,
+            update_account,
+            connect_gmail,
+            reconnect_gmail,
             delete_account,
             save_draft,
             delete_draft,

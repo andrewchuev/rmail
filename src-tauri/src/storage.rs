@@ -14,6 +14,16 @@ pub struct CreateAccountInput {
     pub smtp_host: String,
 }
 
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UpdateAccountInput {
+    pub id: i64,
+    pub email: String,
+    pub display_name: String,
+    pub imap_host: String,
+    pub smtp_host: String,
+}
+
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Account {
@@ -22,6 +32,7 @@ pub struct Account {
     pub display_name: String,
     pub imap_host: String,
     pub smtp_host: String,
+    pub auth_type: String,
 }
 
 #[derive(Debug, Serialize)]
@@ -87,7 +98,7 @@ impl Database {
         let connection = self.connection.lock().map_err(|error| error.to_string())?;
         let mut statement = connection
             .prepare(
-                "SELECT id, email, display_name, imap_host, smtp_host
+                "SELECT id, email, display_name, imap_host, smtp_host, auth_type
                  FROM accounts
                  ORDER BY created_at ASC",
             )
@@ -100,6 +111,7 @@ impl Database {
                     display_name: row.get(2)?,
                     imap_host: row.get(3)?,
                     smtp_host: row.get(4)?,
+                    auth_type: row.get(5)?,
                 })
             })
             .map_err(|error| error.to_string())?
@@ -113,7 +125,7 @@ impl Database {
         let connection = self.connection.lock().map_err(|error| error.to_string())?;
         connection
             .query_row(
-                "SELECT id, email, display_name, imap_host, smtp_host FROM accounts WHERE id = ?1",
+                "SELECT id, email, display_name, imap_host, smtp_host, auth_type FROM accounts WHERE id = ?1",
                 params![account_id],
                 |row| {
                     Ok(Account {
@@ -122,6 +134,7 @@ impl Database {
                         display_name: row.get(2)?,
                         imap_host: row.get(3)?,
                         smtp_host: row.get(4)?,
+                        auth_type: row.get(5)?,
                     })
                 },
             )
@@ -432,6 +445,96 @@ impl Database {
             display_name: input.display_name,
             imap_host: input.imap_host,
             smtp_host: input.smtp_host,
+            auth_type: "password".to_string(),
+        })
+    }
+
+    pub fn update_account(&self, input: UpdateAccountInput) -> Result<Account, String> {
+        let id = input.id;
+        let input = validate_input(CreateAccountInput {
+            email: input.email,
+            display_name: input.display_name,
+            imap_host: input.imap_host,
+            smtp_host: input.smtp_host,
+        })?;
+        let mut connection = self.connection.lock().map_err(|error| error.to_string())?;
+        let (current_email, current_imap_host, auth_type) = connection
+            .query_row(
+                "SELECT email, imap_host, auth_type FROM accounts WHERE id = ?1",
+                params![id],
+                |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, String>(1)?,
+                        row.get::<_, String>(2)?,
+                    ))
+                },
+            )
+            .map_err(|_| "Account was not found.".to_string())?;
+        if auth_type != "password" {
+            return Err("The selected account does not use password authentication.".to_string());
+        }
+
+        let transaction = connection
+            .transaction()
+            .map_err(|error| error.to_string())?;
+        let affected = transaction
+            .execute(
+                "UPDATE accounts
+                 SET email = ?1, display_name = ?2, imap_host = ?3, smtp_host = ?4
+                 WHERE id = ?5",
+                params![
+                    input.email,
+                    input.display_name,
+                    input.imap_host,
+                    input.smtp_host,
+                    id
+                ],
+            )
+            .map_err(|error| error.to_string())?;
+        if affected == 0 {
+            return Err("Account was not found.".to_string());
+        }
+        if current_email != input.email || current_imap_host != input.imap_host {
+            transaction
+                .execute("DELETE FROM mailboxes WHERE account_id = ?1", params![id])
+                .map_err(|error| error.to_string())?;
+        }
+        transaction.commit().map_err(|error| error.to_string())?;
+
+        Ok(Account {
+            id,
+            email: input.email,
+            display_name: input.display_name,
+            imap_host: input.imap_host,
+            smtp_host: input.smtp_host,
+            auth_type: "password".to_string(),
+        })
+    }
+
+    pub fn create_gmail_account(&self, email: &str, display_name: &str) -> Result<Account, String> {
+        let email = email.trim().to_lowercase();
+        let display_name = display_name.trim();
+        if email.is_empty() || display_name.is_empty() {
+            return Err("Google account details are unavailable.".to_string());
+        }
+
+        let connection = self.connection.lock().map_err(|error| error.to_string())?;
+        connection
+            .execute(
+                "INSERT INTO accounts (email, display_name, imap_host, smtp_host, auth_type)
+                 VALUES (?1, ?2, 'imap.gmail.com', 'smtp.gmail.com', 'gmail_oauth')",
+                params![email, display_name],
+            )
+            .map_err(|error| error.to_string())?;
+
+        Ok(Account {
+            id: connection.last_insert_rowid(),
+            email,
+            display_name: display_name.to_string(),
+            imap_host: "imap.gmail.com".to_string(),
+            smtp_host: "smtp.gmail.com".to_string(),
+            auth_type: "gmail_oauth".to_string(),
         })
     }
 
@@ -531,6 +634,7 @@ impl Database {
                      display_name TEXT NOT NULL,
                      imap_host TEXT NOT NULL,
                      smtp_host TEXT NOT NULL,
+                     auth_type TEXT NOT NULL DEFAULT 'password',
                      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
                  );
                  CREATE TABLE IF NOT EXISTS mailboxes (
@@ -595,6 +699,12 @@ impl Database {
             )
             .map_err(|error| error.to_string())?;
         add_column_if_missing(&connection, "mailboxes", "uid_validity", "INTEGER")?;
+        add_column_if_missing(
+            &connection,
+            "accounts",
+            "auth_type",
+            "TEXT NOT NULL DEFAULT 'password'",
+        )?;
         add_column_if_missing(
             &connection,
             "messages",
@@ -680,7 +790,7 @@ fn validate_draft(input: SaveDraftInput) -> Result<SaveDraftInput, String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{CreateAccountInput, Database, SaveDraftInput};
+    use super::{CreateAccountInput, Database, SaveDraftInput, UpdateAccountInput};
     use crate::mail::{InboxSnapshot, MailboxSnapshot, MessageBody, MessageSnapshot};
 
     #[test]
@@ -694,7 +804,6 @@ mod tests {
                 smtp_host: " SMTP.EXAMPLE.COM ".to_string(),
             })
             .expect("account should be created");
-
         assert_eq!(account.email, "hello@example.com");
         assert_eq!(account.imap_host, "imap.example.com");
         assert_eq!(
@@ -711,6 +820,77 @@ mod tests {
             .list_accounts()
             .expect("accounts should list")
             .is_empty());
+    }
+
+    #[test]
+    fn updates_password_account_connection_settings() {
+        let database = Database::in_memory().expect("database should initialize");
+        let account = database
+            .create_account(CreateAccountInput {
+                email: "old@example.com".to_string(),
+                display_name: "Old".to_string(),
+                imap_host: "imap.old.example.com".to_string(),
+                smtp_host: "smtp.old.example.com".to_string(),
+            })
+            .expect("account should be created");
+        database
+            .store_inbox_snapshot(
+                account.id,
+                &InboxSnapshot {
+                    mailboxes: vec![MailboxSnapshot {
+                        path: "INBOX".to_string(),
+                        uid_validity: Some(1),
+                    }],
+                    messages: vec![MessageSnapshot {
+                        mailbox_path: "INBOX".to_string(),
+                        uid: 1,
+                        sender: "Sender".to_string(),
+                        subject: "Old message".to_string(),
+                        date: "Today".to_string(),
+                        internal_date: 1,
+                        is_read: false,
+                    }],
+                },
+            )
+            .expect("snapshot should persist");
+
+        let updated = database
+            .update_account(UpdateAccountInput {
+                id: account.id,
+                email: " NEW@EXAMPLE.COM ".to_string(),
+                display_name: " New ".to_string(),
+                imap_host: " IMAP.NEW.EXAMPLE.COM ".to_string(),
+                smtp_host: " SMTP.NEW.EXAMPLE.COM ".to_string(),
+            })
+            .expect("account should be updated");
+
+        assert_eq!(updated.email, "new@example.com");
+        assert_eq!(updated.display_name, "New");
+        assert_eq!(updated.imap_host, "imap.new.example.com");
+        assert_eq!(
+            database
+                .get_account(account.id)
+                .expect("account should load")
+                .smtp_host,
+            "smtp.new.example.com"
+        );
+        assert!(database
+            .list_cached_mailboxes(account.id)
+            .expect("mailboxes should list")
+            .is_empty());
+    }
+
+    #[test]
+    fn creates_gmail_account_with_oauth_authentication() {
+        let database = Database::in_memory().expect("database should initialize");
+        let account = database
+            .create_gmail_account(" Gmail.User@gmail.com ", " Gmail User ")
+            .expect("Gmail account should be created");
+
+        assert_eq!(account.email, "gmail.user@gmail.com");
+        assert_eq!(account.auth_type, "gmail_oauth");
+        assert_eq!(account.imap_host, "imap.gmail.com");
+        assert_eq!(account.smtp_host, "smtp.gmail.com");
     }
 
     #[test]

@@ -6,9 +6,11 @@ export type Account = {
   displayName: string;
   imapHost: string;
   smtpHost: string;
+  authType: "password" | "gmail_oauth";
 };
 
-export type CreateAccountInput = Omit<Account, "id">;
+export type CreateAccountInput = Omit<Account, "id" | "authType">;
+export type UpdateAccountInput = Omit<Account, "authType">;
 
 export type MailConnectionInput = {
   imapHost: string;
@@ -159,6 +161,22 @@ export async function listCachedMessages(
   return invoke<CachedMessage[]>("list_cached_messages", {
     input: { accountId, mailboxPath },
   });
+}
+
+export async function updateAccount(input: UpdateAccountInput): Promise<Account> {
+  return invoke<Account>("update_account", { input });
+}
+
+export async function connectGmail(): Promise<Account> {
+  if (!isTauri()) {
+    throw new Error("Gmail setup is available in the desktop application.");
+  }
+
+  return invoke<Account>("connect_gmail");
+}
+
+export async function reconnectGmail(accountId: number): Promise<Account> {
+  return invoke<Account>("reconnect_gmail", { accountId });
 }
 
 export async function listUnifiedInbox(): Promise<CachedMessage[]> {

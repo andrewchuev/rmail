@@ -5,7 +5,7 @@ use async_native_tls::TlsConnector;
 use futures_util::TryStreamExt;
 use lettre::{
     message::{header::ContentType, Mailbox, Message},
-    transport::smtp::authentication::Credentials,
+    transport::smtp::authentication::{Credentials, Mechanism},
     AsyncSmtpTransport, AsyncTransport, Tokio1Executor,
 };
 use mailparse::{parse_mail, DispositionType, ParsedMail};
@@ -26,6 +26,27 @@ pub struct MailConnectionInput {
     pub smtp_port: u16,
     pub username: String,
     pub password: String,
+    #[serde(default)]
+    pub oauth_access_token: Option<String>,
+}
+
+struct XOAuth2 {
+    username: String,
+    access_token: String,
+}
+
+impl async_imap::Authenticator for XOAuth2 {
+    type Response = String;
+
+    fn process(&mut self, challenge: &[u8]) -> Self::Response {
+        if !challenge.is_empty() {
+            return String::new();
+        }
+        format!(
+            "user={}\x01auth=Bearer {}\x01\x01",
+            self.username, self.access_token
+        )
+    }
 }
 
 #[derive(Debug, Serialize)]
@@ -250,11 +271,17 @@ pub async fn send_outgoing_message(
 ) -> Result<(), String> {
     let input = validate_input(input)?;
     let message = build_outgoing_message(&input.username, display_name, message)?;
-    let transport = AsyncSmtpTransport::<Tokio1Executor>::starttls_relay(&input.smtp_host)
+    let mut transport = AsyncSmtpTransport::<Tokio1Executor>::starttls_relay(&input.smtp_host)
         .map_err(|_| "Invalid SMTP server address.".to_string())?
         .port(input.smtp_port)
-        .credentials(Credentials::new(input.username, input.password))
-        .build::<Tokio1Executor>();
+        .credentials(Credentials::new(
+            input.username,
+            input.oauth_access_token.clone().unwrap_or(input.password),
+        ));
+    if input.oauth_access_token.is_some() {
+        transport = transport.authentication(vec![Mechanism::Xoauth2]);
+    }
+    let transport = transport.build::<Tokio1Executor>();
 
     within_timeout(transport.send(message), "Unable to send the message.")
         .await
@@ -342,10 +369,23 @@ async fn connect_session(
         .await?
         .ok_or_else(|| "IMAP server closed the connection.".to_string())?;
 
-    client
-        .login(&input.username, &input.password)
-        .await
-        .map_err(|_| "Unable to authenticate with IMAP.".to_string())
+    if let Some(access_token) = &input.oauth_access_token {
+        client
+            .authenticate(
+                "XOAUTH2",
+                XOAuth2 {
+                    username: input.username.clone(),
+                    access_token: access_token.clone(),
+                },
+            )
+            .await
+            .map_err(|_| "Unable to authenticate with IMAP.".to_string())
+    } else {
+        client
+            .login(&input.username, &input.password)
+            .await
+            .map_err(|_| "Unable to authenticate with IMAP.".to_string())
+    }
 }
 
 fn snapshot_message(
@@ -531,14 +571,20 @@ fn sanitize_html(value: String) -> String {
 }
 
 async fn test_smtp(input: &MailConnectionInput) -> Result<bool, String> {
-    let transport = AsyncSmtpTransport::<Tokio1Executor>::starttls_relay(&input.smtp_host)
+    let mut transport = AsyncSmtpTransport::<Tokio1Executor>::starttls_relay(&input.smtp_host)
         .map_err(|_| "Invalid SMTP server address.".to_string())?
         .port(input.smtp_port)
         .credentials(Credentials::new(
             input.username.clone(),
-            input.password.clone(),
-        ))
-        .build::<Tokio1Executor>();
+            input
+                .oauth_access_token
+                .clone()
+                .unwrap_or_else(|| input.password.clone()),
+        ));
+    if input.oauth_access_token.is_some() {
+        transport = transport.authentication(vec![Mechanism::Xoauth2]);
+    }
+    let transport = transport.build::<Tokio1Executor>();
 
     within_timeout(transport.test_connection(), "SMTP server is unavailable.").await
 }
@@ -564,13 +610,17 @@ fn validate_input(input: MailConnectionInput) -> Result<MailConnectionInput, Str
         smtp_port: input.smtp_port,
         username: input.username.trim().to_string(),
         password: input.password,
+        oauth_access_token: input.oauth_access_token,
     };
 
     if !is_valid_host(&input.imap_host) || !is_valid_host(&input.smtp_host) {
         return Err("Enter valid IMAP and SMTP server addresses.".to_string());
     }
 
-    if input.username.is_empty() || input.password.is_empty() {
+    if input.username.is_empty()
+        || (input.password.is_empty()
+            && input.oauth_access_token.as_deref().unwrap_or("").is_empty())
+    {
         return Err("Enter an email address and password.".to_string());
     }
 
@@ -588,8 +638,10 @@ fn is_valid_host(host: &str) -> bool {
 mod tests {
     use super::{
         attachment_content, build_outgoing_message, ensure_message_source_size, parse_message,
-        validate_input, MailConnectionInput, OutgoingMessageInput, MESSAGE_SOURCE_BYTE_LIMIT,
+        validate_input, MailConnectionInput, OutgoingMessageInput, XOAuth2,
+        MESSAGE_SOURCE_BYTE_LIMIT,
     };
+    use async_imap::Authenticator;
     use mailparse::parse_mail;
 
     #[test]
@@ -601,9 +653,24 @@ mod tests {
             smtp_port: 587,
             username: "person@example.com".to_string(),
             password: "secret".to_string(),
+            oauth_access_token: None,
         });
 
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn creates_xoauth2_initial_response_and_ends_error_handshake() {
+        let mut authenticator = XOAuth2 {
+            username: "person@gmail.com".to_string(),
+            access_token: "access-token".to_string(),
+        };
+
+        assert_eq!(
+            authenticator.process(b""),
+            "user=person@gmail.com\x01auth=Bearer access-token\x01\x01"
+        );
+        assert!(authenticator.process(br#"{"status":"401"}"#).is_empty());
     }
 
     #[test]

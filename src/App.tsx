@@ -1,10 +1,11 @@
 import { useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from "react";
-import { Archive, ChevronDown, Clock3, Inbox, MoreHorizontal, Paperclip, PenLine, Search, Settings2, Trash2 } from "lucide-react";
+import { Archive, ChevronDown, Clock3, Inbox, MoreHorizontal, Paperclip, PenLine, Plus, Search, Settings, Trash2 } from "lucide-react";
 import { save } from "@tauri-apps/plugin-dialog";
 import { isPermissionGranted, requestPermission, sendNotification } from "@tauri-apps/plugin-notification";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { Button } from "@/components/ui/button";
+import { SettingsPage } from "@/components/SettingsPage";
 import {
   ResizableHandle,
   ResizablePanel,
@@ -19,6 +20,7 @@ import {
 } from "@/components/ui/tooltip";
 import {
   createAccount,
+  connectGmail,
   diagnosticLogPath,
   deleteDraft,
   deleteAccount,
@@ -47,6 +49,7 @@ import {
   saveStoredVaultPassword,
 } from "@/lib/credentials";
 import { connectionErrorMessage } from "@/lib/errors";
+import { applyWindowSettings, loadBackgroundSettings, saveBackgroundSettings, type BackgroundSettings } from "@/lib/settings";
 import "./App.css";
 
 function folderLabel(path: string) {
@@ -68,17 +71,6 @@ type ComposeState = {
 };
 
 const emptyCompose: ComposeState = { recipients: "", subject: "", body: "" };
-const backgroundSettingsKey = "rmail.background-settings";
-type BackgroundSettings = { enabled: boolean; intervalMinutes: number; notifications: boolean; hideOnClose: boolean };
-const defaultBackgroundSettings: BackgroundSettings = { enabled: true, intervalMinutes: 5, notifications: true, hideOnClose: true };
-
-function loadBackgroundSettings(): BackgroundSettings {
-  try {
-    return { ...defaultBackgroundSettings, ...JSON.parse(localStorage.getItem(backgroundSettingsKey) ?? "{}") };
-  } catch {
-    return defaultBackgroundSettings;
-  }
-}
 
 function IconButton({
   label,
@@ -105,10 +97,12 @@ function AccountSetup({
   isAdditional = false,
   onAccountCreated,
   onCancel,
+  onGmailConnected,
 }: {
   isAdditional?: boolean;
   onAccountCreated: (account: Account, password: string, vaultPassword: string) => Promise<void>;
   onCancel?: () => void;
+  onGmailConnected: (account: Account) => Promise<void>;
 }) {
   const [input, setInput] = useState<CreateAccountInput>({
     displayName: "",
@@ -125,6 +119,19 @@ function AccountSetup({
   const [isTesting, setTesting] = useState(false);
   const [isConnectionVerified, setConnectionVerified] = useState(false);
   const [isSubmitting, setSubmitting] = useState(false);
+  const [isGmailConnecting, setGmailConnecting] = useState(false);
+
+  async function connectGoogleAccount() {
+    setError(null);
+    setGmailConnecting(true);
+    try {
+      await onGmailConnected(await connectGmail());
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : String(reason || "Не удалось подключить Gmail."));
+    } finally {
+      setGmailConnecting(false);
+    }
+  }
 
   function updateField(field: keyof CreateAccountInput, value: string) {
     setInput((current) => ({ ...current, [field]: value }));
@@ -209,7 +216,12 @@ function AccountSetup({
           Проверьте доступ к IMAP и SMTP, затем защитите данные для входа паролем хранилища.
         </p>
 
-        <form className="mt-7 space-y-4" onSubmit={submit}>
+        <Button className="mt-6 w-full" disabled={isGmailConnecting} onClick={() => void connectGoogleAccount()} type="button" variant="secondary">
+          {isGmailConnecting ? "Ожидаем Google…" : "Подключить Gmail"}
+        </Button>
+        <div className="my-5 flex items-center gap-3 text-xs text-muted-foreground"><span className="h-px flex-1 bg-border" /><span>или IMAP вручную</span><span className="h-px flex-1 bg-border" /></div>
+
+        <form className="space-y-4" onSubmit={submit}>
           <label className="setup-field">
             <span>Название аккаунта</span>
             <input onChange={(event) => updateField("displayName", event.target.value)} placeholder="Рабочая почта" required value={input.displayName} />
@@ -307,7 +319,7 @@ function App() {
   const [isSyncing, setSyncing] = useState(false);
   const [composeAccountId, setComposeAccountId] = useState<number | null>(null);
   const [backgroundSettings, setBackgroundSettings] = useState<BackgroundSettings>(loadBackgroundSettings);
-  const [isSettingsOpen, setSettingsOpen] = useState(false);
+  const [activeView, setActiveView] = useState<"mail" | "settings">("mail");
   const hasCompletedBackgroundSync = useRef(false);
   const knownMessageKeys = useRef<Set<string>>(new Set());
 
@@ -330,6 +342,20 @@ function App() {
     (message) => messageKey(message) === selectedMessageKey,
   ) ?? null;
 
+  async function accountCredential(account: Account, name: "imapPassword" | "smtpPassword") {
+    if (account.authType === "gmail_oauth") {
+      return "";
+    }
+    if (!vaultPassword) {
+      throw new Error("Откройте хранилище, чтобы продолжить.");
+    }
+    const password = await readCredential(account.id, name, vaultPassword);
+    if (!password) {
+      throw new Error("Данные для входа не найдены в хранилище.");
+    }
+    return password;
+  }
+
   useEffect(() => {
     let ignore = false;
 
@@ -351,7 +377,8 @@ function App() {
   }, []);
 
   useEffect(() => {
-    localStorage.setItem(backgroundSettingsKey, JSON.stringify(backgroundSettings));
+    saveBackgroundSettings(backgroundSettings);
+    void applyWindowSettings(backgroundSettings).catch(() => undefined);
   }, [backgroundSettings]);
 
   useEffect(() => {
@@ -443,7 +470,7 @@ function App() {
   useEffect(() => {
     const message = selectedMessage;
     const account = message ? accounts?.find((item) => item.id === message.accountId) : null;
-    if (!account || !message || !vaultPassword) {
+    if (!account || !message || (account.authType !== "gmail_oauth" && !vaultPassword)) {
       setMessageBody(null);
       setBodyError(null);
       setBodyLoading(false);
@@ -454,14 +481,8 @@ function App() {
     setMessageBody(null);
     setBodyLoading(true);
     setBodyError(null);
-    void readCredential(account.id, "imapPassword", vaultPassword)
-      .then((password) => {
-        if (!password) {
-          throw new Error("Данные для входа не найдены в хранилище.");
-        }
-
-        return loadMessageBody(account.id, message.mailboxPath, message.uid, password);
-      })
+    void accountCredential(account, "imapPassword")
+      .then((password) => loadMessageBody(account.id, message.mailboxPath, message.uid, password))
       .then((body) => {
         if (!ignore) {
           setMessageBody(body);
@@ -484,7 +505,11 @@ function App() {
   }, [accounts, selectedMessage, vaultPassword]);
 
   useEffect(() => {
-    if (!backgroundSettings.enabled || !vaultPassword || !accounts?.length) return;
+    if (
+      !backgroundSettings.enabled
+      || !accounts?.length
+      || (!vaultPassword && accounts.every((account) => account.authType === "password"))
+    ) return;
     const timer = window.setInterval(() => void syncAllAccounts(true), backgroundSettings.intervalMinutes * 60_000);
     return () => window.clearInterval(timer);
   }, [accounts, backgroundSettings, vaultPassword]);
@@ -502,6 +527,19 @@ function App() {
       <AccountSetup
         isAdditional={accounts.length > 0}
         onCancel={accounts.length > 0 ? () => setAddingAccount(false) : undefined}
+        onGmailConnected={async (account) => {
+          setAccounts((current) => [...(current ?? []), account]);
+          setActiveAccountId(account.id);
+          setActiveFolder("INBOX");
+          setAddingAccount(false);
+          try {
+            const status = await syncAccount(account.id, "");
+            setSyncMessage(`Синхронизировано: папок — ${status.mailboxCount}, писем — ${status.messageCount}`);
+            setSyncRevision((current) => current + 1);
+          } catch (reason) {
+            setSyncMessage(reason instanceof Error ? reason.message : String(reason || "Gmail подключён, но первая синхронизация не удалась"));
+          }
+        }}
         onAccountCreated={async (account, password, newVaultPassword) => {
           setVaultPassword(newVaultPassword);
           setAccounts((current) => [...(current ?? []), account]);
@@ -525,7 +563,7 @@ function App() {
 
   async function unlockVault(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    const account = accounts?.[0];
+    const account = accounts?.find((item) => item.authType === "password");
     if (!account) {
       return;
     }
@@ -547,7 +585,7 @@ function App() {
   async function downloadAttachment(position: number, name: string) {
     const message = selectedMessage;
     const account = message ? accountList.find((item) => item.id === message.accountId) : null;
-    if (!account || !message || !vaultPassword) {
+    if (!account || !message || (account.authType !== "gmail_oauth" && !vaultPassword)) {
       return;
     }
 
@@ -559,10 +597,7 @@ function App() {
 
     setSavingAttachmentPosition(position);
     try {
-      const password = await readCredential(account.id, "imapPassword", vaultPassword);
-      if (!password) {
-        throw new Error("Данные для входа не найдены в хранилище.");
-      }
+      const password = await accountCredential(account, "imapPassword");
       await saveMessageAttachment(account.id, message.mailboxPath, message.uid, position, password, destination);
       setAttachmentMessage(`Вложение «${name}» сохранено.`);
     } catch (reason) {
@@ -607,7 +642,7 @@ function App() {
   async function handleSendMessage(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const account = accountList.find((item) => item.id === composeAccountId);
-    if (!account || !vaultPassword) {
+    if (!account || (account.authType !== "gmail_oauth" && !vaultPassword)) {
       setComposeMessage("Откройте хранилище, чтобы отправить письмо.");
       return;
     }
@@ -616,10 +651,7 @@ function App() {
     setSending(true);
     try {
       const draft = await saveComposeDraft();
-      const password = await readCredential(account.id, "smtpPassword", vaultPassword);
-      if (!password) {
-        throw new Error("Данные для отправки не найдены в хранилище.");
-      }
+      const password = await accountCredential(account, "smtpPassword");
       await sendMessage(account.id, password, compose);
       await deleteDraft(draft.id);
       setComposeOpen(false);
@@ -634,15 +666,13 @@ function App() {
   }
 
   async function syncAllAccounts(isBackground = false) {
-    if (!vaultPassword || isSyncing) {
-      setSyncMessage("Откройте хранилище, чтобы синхронизировать почту");
+    if (isSyncing) {
       return;
     }
 
     setSyncing(true);
     const results = await Promise.allSettled(accountList.map(async (account) => {
-      const password = await readCredential(account.id, "imapPassword", vaultPassword);
-      if (!password) throw new Error("Credentials are unavailable.");
+      const password = await accountCredential(account, "imapPassword");
       return syncAccount(account.id, password);
     }));
     const successful = results.filter((result) => result.status === "fulfilled");
@@ -668,6 +698,20 @@ function App() {
     setSyncing(false);
   }
 
+  if (activeView === "settings") {
+    return (
+      <SettingsPage
+        accounts={accountList}
+        backgroundSettings={backgroundSettings}
+        onAccountUpdated={(updated) => setAccounts((current) => current?.map((account) => account.id === updated.id ? updated : account) ?? [])}
+        onAddAccount={() => setAddingAccount(true)}
+        onBack={() => setActiveView("mail")}
+        onBackgroundSettingsChange={setBackgroundSettings}
+        vaultPassword={vaultPassword}
+      />
+    );
+  }
+
   return (
     <TooltipProvider delayDuration={350}>
       <main className="min-h-svh bg-background text-foreground">
@@ -683,16 +727,9 @@ function App() {
                   <ChevronDown className="size-3.5 text-muted-foreground" />
                 </button>
                 <IconButton label="Добавить аккаунт" onClick={() => setAddingAccount(true)}>
-                  <Settings2 />
+                  <Plus />
                 </IconButton>
               </div>
-
-              <Button className="mt-3 w-full" onClick={() => setSettingsOpen((value) => !value)} size="sm" variant="ghost">Фоновая работа и уведомления</Button>
-              {isSettingsOpen ? <section className="mt-2 space-y-3 rounded-lg border bg-background/70 p-3 text-xs">
-                <label className="flex items-center justify-between gap-3"><span>Проверять в фоне</span><input checked={backgroundSettings.enabled} onChange={(event) => setBackgroundSettings((current) => ({ ...current, enabled: event.target.checked }))} type="checkbox" /></label>
-                <label className="grid gap-1"><span>Интервал</span><select onChange={(event) => setBackgroundSettings((current) => ({ ...current, intervalMinutes: Number(event.target.value) }))} value={backgroundSettings.intervalMinutes}><option value={1}>1 минута</option><option value={5}>5 минут</option><option value={15}>15 минут</option><option value={30}>30 минут</option><option value={60}>60 минут</option></select></label>
-                <label className="flex items-center justify-between gap-3"><span>Системные уведомления</span><input checked={backgroundSettings.notifications} onChange={(event) => setBackgroundSettings((current) => ({ ...current, notifications: event.target.checked }))} type="checkbox" /></label>
-              </section> : null}
 
               <Button className="mt-6 w-full justify-start" onClick={openCompose}>
                 <PenLine />
@@ -703,7 +740,7 @@ function App() {
                 {isSyncing ? "Синхронизация…" : "Синхронизировать всё"}
               </Button>
 
-              {!vaultPassword ? (
+              {!vaultPassword && accountList.some((account) => account.authType === "password") ? (
                 <form className="mt-3 space-y-2 rounded-lg border bg-background/70 p-3" onSubmit={unlockVault}>
                   <p className="text-xs leading-5 text-muted-foreground">Откройте хранилище один раз, чтобы сохранить ключ в системе.</p>
                   <label className="setup-field">
@@ -756,6 +793,11 @@ function App() {
                   </button>
                 ))}
               </nav>
+
+              <Button className="mt-4 w-full justify-start" onClick={() => setActiveView("settings")} variant="ghost">
+                <Settings />
+                Настройки
+              </Button>
 
               <div className="mt-auto rounded-lg border bg-background/70 p-3 text-xs text-muted-foreground">
                 <div className="mb-2 flex items-center gap-2 font-medium text-foreground">
@@ -860,7 +902,7 @@ function App() {
                         <time className="ml-auto shrink-0 text-xs text-muted-foreground">{selectedMessage.date}</time>
                       </div>
 
-                      {!vaultPassword ? (
+                      {!vaultPassword && accountList.find((account) => account.id === selectedMessage.accountId)?.authType === "password" ? (
                         <form className="mt-8 max-w-sm space-y-3" onSubmit={unlockVault}>
                           <p className="text-sm leading-6 text-muted-foreground">Откройте хранилище, чтобы загрузить текст письма.</p>
                           <label className="setup-field">
