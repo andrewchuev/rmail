@@ -6,6 +6,9 @@ dist/
 # Rust builds
 src-tauri/target/
 
+# IDE settings
+.idea/
+
 # Local application data
 .env
 .env.*
