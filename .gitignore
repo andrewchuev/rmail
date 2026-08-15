@@ -1,0 +1,12 @@
+# Frontend dependencies and builds
+node_modules/
+dist/
+.svelte-kit/
+
+# Rust builds
+src-tauri/target/
+
+# Local application data
+.env
+.env.*
+!.env.example
