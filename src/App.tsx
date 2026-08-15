@@ -26,6 +26,7 @@ import {
   type CachedMailbox,
   type CachedMessage,
   type CreateAccountInput,
+  type MessageBody,
 } from "@/lib/accounts";
 import { readCredential, saveCredentials } from "@/lib/credentials";
 import "./App.css";
@@ -230,7 +231,7 @@ function App() {
   const [vaultPassword, setVaultPassword] = useState("");
   const [unlockPassword, setUnlockPassword] = useState("");
   const [unlockError, setUnlockError] = useState<string | null>(null);
-  const [messageBody, setMessageBody] = useState<string | null>(null);
+  const [messageBody, setMessageBody] = useState<MessageBody | null>(null);
   const [bodyError, setBodyError] = useState<string | null>(null);
   const [isBodyLoading, setBodyLoading] = useState(false);
 
@@ -304,7 +305,7 @@ function App() {
 
         return loadMessageBody(account.id, activeFolder, message.uid, password);
       })
-      .then((body) => setMessageBody(body.text))
+      .then(setMessageBody)
       .catch((reason) => setBodyError(reason instanceof Error ? reason.message : "Не удалось загрузить письмо."))
       .finally(() => setBodyLoading(false));
   }, [accounts, activeFolder, cachedMessages, selectedId, vaultPassword]);
@@ -508,9 +509,21 @@ function App() {
                           <Button type="submit">Открыть хранилище</Button>
                         </form>
                       ) : (
-                        <div className="mail-body mt-8 whitespace-pre-wrap break-words text-[0.95rem] leading-7 text-foreground/85">
-                          {isBodyLoading ? "Загружаем текст письма…" : bodyError ?? messageBody ?? "Текст письма недоступен."}
-                        </div>
+                        <>
+                          <div className="mail-body mt-8 whitespace-pre-wrap break-words text-[0.95rem] leading-7 text-foreground/85">
+                            {isBodyLoading ? "Загружаем текст письма…" : bodyError ?? messageBody?.text ?? "Текст письма недоступен."}
+                          </div>
+                          {messageBody?.attachments.length ? (
+                            <div className="mt-8 flex flex-wrap gap-2">
+                              {messageBody.attachments.map((attachment) => (
+                                <span className="attachment-chip" key={`${attachment.name}-${attachment.size}`}>
+                                  <Paperclip className="size-3.5" />
+                                  {attachment.name} · {attachment.mimeType}
+                                </span>
+                              ))}
+                            </div>
+                          ) : null}
+                        </>
                       )}
                     </div>
                   </div>

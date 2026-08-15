@@ -3,7 +3,7 @@ use std::{fs, path::Path, sync::Mutex};
 use rusqlite::{params, Connection};
 use serde::{Deserialize, Serialize};
 
-use crate::mail::InboxSnapshot;
+use crate::mail::{InboxSnapshot, MessageBody};
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -169,9 +169,9 @@ impl Database {
         account_id: i64,
         mailbox_path: &str,
         uid: u32,
-    ) -> Result<Option<String>, String> {
+    ) -> Result<Option<MessageBody>, String> {
         let connection = self.connection.lock().map_err(|error| error.to_string())?;
-        connection
+        let text = connection
             .query_row(
                 "SELECT body FROM message_bodies
                  WHERE account_id = ?1 AND mailbox_path = ?2 AND uid = ?3",
@@ -183,7 +183,32 @@ impl Database {
                 rusqlite::Error::QueryReturnedNoRows => Ok(None),
                 error => Err(error),
             })
-            .map_err(|error| error.to_string())
+            .map_err(|error| error.to_string())?;
+
+        let Some(text) = text else {
+            return Ok(None);
+        };
+        let mut statement = connection
+            .prepare(
+                "SELECT name, mime_type, size
+                 FROM message_attachments
+                 WHERE account_id = ?1 AND mailbox_path = ?2 AND uid = ?3
+                 ORDER BY position ASC",
+            )
+            .map_err(|error| error.to_string())?;
+        let attachments = statement
+            .query_map(params![account_id, mailbox_path, uid], |row| {
+                Ok(crate::mail::AttachmentMetadata {
+                    name: row.get(0)?,
+                    mime_type: row.get(1)?,
+                    size: row.get(2)?,
+                })
+            })
+            .map_err(|error| error.to_string())?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|error| error.to_string())?;
+
+        Ok(Some(MessageBody { text, attachments }))
     }
 
     pub fn store_message_body(
@@ -191,21 +216,48 @@ impl Database {
         account_id: i64,
         mailbox_path: &str,
         uid: u32,
-        body: &str,
+        body: &MessageBody,
     ) -> Result<(), String> {
-        let connection = self.connection.lock().map_err(|error| error.to_string())?;
-        connection
+        let mut connection = self.connection.lock().map_err(|error| error.to_string())?;
+        let transaction = connection
+            .transaction()
+            .map_err(|error| error.to_string())?;
+        transaction
             .execute(
                 "INSERT INTO message_bodies (account_id, mailbox_path, uid, body, cached_at)
                  VALUES (?1, ?2, ?3, ?4, CURRENT_TIMESTAMP)
                  ON CONFLICT(account_id, mailbox_path, uid) DO UPDATE SET
                    body = excluded.body,
                    cached_at = CURRENT_TIMESTAMP",
-                params![account_id, mailbox_path, uid, body],
+                params![account_id, mailbox_path, uid, body.text],
             )
             .map_err(|error| error.to_string())?;
+        transaction
+            .execute(
+                "DELETE FROM message_attachments
+                 WHERE account_id = ?1 AND mailbox_path = ?2 AND uid = ?3",
+                params![account_id, mailbox_path, uid],
+            )
+            .map_err(|error| error.to_string())?;
+        for (position, attachment) in body.attachments.iter().enumerate() {
+            transaction
+                .execute(
+                    "INSERT INTO message_attachments (account_id, mailbox_path, uid, position, name, mime_type, size)
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+                    params![
+                        account_id,
+                        mailbox_path,
+                        uid,
+                        position as i64,
+                        attachment.name,
+                        attachment.mime_type,
+                        attachment.size
+                    ],
+                )
+                .map_err(|error| error.to_string())?;
+        }
 
-        Ok(())
+        transaction.commit().map_err(|error| error.to_string())
     }
 
     pub fn create_account(&self, input: CreateAccountInput) -> Result<Account, String> {
@@ -333,6 +385,18 @@ impl Database {
                      PRIMARY KEY (account_id, mailbox_path, uid),
                      FOREIGN KEY (account_id, mailbox_path, uid)
                        REFERENCES messages(account_id, mailbox_path, uid) ON DELETE CASCADE
+                 );
+                 CREATE TABLE IF NOT EXISTS message_attachments (
+                     account_id INTEGER NOT NULL,
+                     mailbox_path TEXT NOT NULL,
+                     uid INTEGER NOT NULL,
+                     position INTEGER NOT NULL,
+                     name TEXT NOT NULL,
+                     mime_type TEXT NOT NULL,
+                     size INTEGER NOT NULL,
+                     PRIMARY KEY (account_id, mailbox_path, uid, position),
+                     FOREIGN KEY (account_id, mailbox_path, uid)
+                       REFERENCES messages(account_id, mailbox_path, uid) ON DELETE CASCADE
                  );",
             )
             .map_err(|error| error.to_string())
@@ -372,7 +436,7 @@ fn validate_input(input: CreateAccountInput) -> Result<CreateAccountInput, Strin
 #[cfg(test)]
 mod tests {
     use super::{CreateAccountInput, Database};
-    use crate::mail::{InboxSnapshot, MailboxSnapshot, MessageSnapshot};
+    use crate::mail::{InboxSnapshot, MailboxSnapshot, MessageBody, MessageSnapshot};
 
     #[test]
     fn persists_account_metadata_without_credentials() {
@@ -434,13 +498,24 @@ mod tests {
             )
             .expect("snapshot should persist");
         database
-            .store_message_body(account.id, "INBOX", 7, "Cached body")
+            .store_message_body(
+                account.id,
+                "INBOX",
+                7,
+                &MessageBody {
+                    text: "Cached body".to_string(),
+                    attachments: Vec::new(),
+                },
+            )
             .expect("body should persist");
         assert_eq!(
             database
                 .get_cached_message_body(account.id, "INBOX", 7)
                 .expect("body should load"),
-            Some("Cached body".to_string())
+            Some(MessageBody {
+                text: "Cached body".to_string(),
+                attachments: Vec::new(),
+            })
         );
 
         let count: i64 = {

@@ -44,6 +44,13 @@ export type CachedMessage = {
 
 export type MessageBody = {
   text: string;
+  attachments: AttachmentMetadata[];
+};
+
+export type AttachmentMetadata = {
+  name: string;
+  mimeType: string;
+  size: number;
 };
 
 export async function listAccounts(): Promise<Account[]> {

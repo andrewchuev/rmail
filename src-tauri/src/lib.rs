@@ -84,12 +84,12 @@ async fn load_message_body(
     input: LoadMessageBodyInput,
     state: tauri::State<'_, AppState>,
 ) -> Result<MessageBody, String> {
-    if let Some(text) =
+    if let Some(body) =
         state
             .database
             .get_cached_message_body(input.account_id, &input.mailbox_path, input.uid)?
     {
-        return Ok(MessageBody { text });
+        return Ok(body);
     }
 
     let account = state.database.get_account(input.account_id)?;
@@ -106,12 +106,9 @@ async fn load_message_body(
         input.uid,
     )
     .await?;
-    state.database.store_message_body(
-        input.account_id,
-        &input.mailbox_path,
-        input.uid,
-        &body.text,
-    )?;
+    state
+        .database
+        .store_message_body(input.account_id, &input.mailbox_path, input.uid, &body)?;
 
     Ok(body)
 }

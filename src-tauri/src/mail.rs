@@ -3,6 +3,7 @@ use std::time::Duration;
 use async_native_tls::TlsConnector;
 use futures_util::TryStreamExt;
 use lettre::{transport::smtp::authentication::Credentials, AsyncSmtpTransport, Tokio1Executor};
+use mailparse::{parse_mail, DispositionType, ParsedMail};
 use serde::{Deserialize, Serialize};
 use tokio::{net::TcpStream, time::timeout};
 
@@ -51,10 +52,19 @@ pub struct InboxSnapshot {
     pub messages: Vec<MessageSnapshot>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct MessageBody {
     pub text: String,
+    pub attachments: Vec<AttachmentMetadata>,
+}
+
+#[derive(Debug, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AttachmentMetadata {
+    pub name: String,
+    pub mime_type: String,
+    pub size: i64,
 }
 
 pub async fn test_connection(input: MailConnectionInput) -> Result<MailConnectionStatus, String> {
@@ -127,20 +137,21 @@ pub async fn fetch_message_text(
     let mut session = connect_session(&input).await?;
     within_timeout(session.select(mailbox_path), "Unable to open the mailbox.").await?;
     let messages = within_timeout(
-        session.uid_fetch(uid.to_string(), "(BODY.PEEK[TEXT])"),
+        session.uid_fetch(uid.to_string(), "(BODY.PEEK[])"),
         "Unable to fetch the message body.",
     )
     .await?
     .try_collect::<Vec<_>>()
     .await
     .map_err(|_| "Unable to fetch the message body.".to_string())?;
-    let text = messages
+    let source = messages
         .into_iter()
-        .find_map(|message| message.text().map(decode_message_text))
+        .find_map(|message| message.body().map(|body| body.to_vec()))
         .ok_or_else(|| "Message body is unavailable.".to_string())?;
+    let body = parse_message(&source)?;
 
     let _ = session.logout().await;
-    Ok(MessageBody { text })
+    Ok(body)
 }
 
 async fn test_imap(input: &MailConnectionInput) -> Result<Vec<String>, String> {
@@ -241,11 +252,39 @@ fn decode_header(value: &[u8]) -> String {
     String::from_utf8_lossy(value).trim().to_string()
 }
 
-fn decode_message_text(value: &[u8]) -> String {
-    String::from_utf8_lossy(value)
-        .chars()
-        .take(MESSAGE_BODY_CHARACTER_LIMIT)
-        .collect()
+fn parse_message(source: &[u8]) -> Result<MessageBody, String> {
+    let parsed = parse_mail(source).map_err(|_| "Unable to parse the message.".to_string())?;
+    let text = parsed
+        .parts()
+        .filter(|part| part.ctype.mimetype.eq_ignore_ascii_case("text/plain"))
+        .find_map(|part| part.get_body().ok())
+        .map(limit_message_text)
+        .unwrap_or_else(|| "A plain-text version of this message is unavailable.".to_string());
+    let attachments = parsed.parts().filter_map(attachment_metadata).collect();
+
+    Ok(MessageBody { text, attachments })
+}
+
+fn attachment_metadata(part: &ParsedMail<'_>) -> Option<AttachmentMetadata> {
+    let disposition = part.get_content_disposition();
+    let name = disposition
+        .params
+        .get("filename")
+        .or_else(|| part.ctype.params.get("name"));
+
+    if name.is_none() && !matches!(disposition.disposition, DispositionType::Attachment) {
+        return None;
+    }
+
+    Some(AttachmentMetadata {
+        name: name.cloned().unwrap_or_else(|| "Attachment".to_string()),
+        mime_type: part.ctype.mimetype.clone(),
+        size: i64::try_from(part.get_body_raw().ok()?.len()).ok()?,
+    })
+}
+
+fn limit_message_text(value: String) -> String {
+    value.chars().take(MESSAGE_BODY_CHARACTER_LIMIT).collect()
 }
 
 async fn test_smtp(input: &MailConnectionInput) -> Result<bool, String> {
