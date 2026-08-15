@@ -1,4 +1,4 @@
-import { useMemo, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useState, type FormEvent, type ReactNode } from "react";
 import {
   Archive,
   ChevronDown,
@@ -27,6 +27,7 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
+import { createAccount, listAccounts, type Account, type CreateAccountInput } from "@/lib/accounts";
 import "./App.css";
 
 type Folder = "Входящие" | "Отправленные" | "Черновики" | "В архиве" | "Корзина";
@@ -117,7 +118,76 @@ function IconButton({
   );
 }
 
+function AccountSetup({ onAccountCreated }: { onAccountCreated: (account: Account) => void }) {
+  const [input, setInput] = useState<CreateAccountInput>({
+    displayName: "",
+    email: "",
+    imapHost: "",
+    smtpHost: "",
+  });
+  const [error, setError] = useState<string | null>(null);
+  const [isSubmitting, setSubmitting] = useState(false);
+
+  function updateField(field: keyof CreateAccountInput, value: string) {
+    setInput((current) => ({ ...current, [field]: value }));
+  }
+
+  async function submit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setError(null);
+    setSubmitting(true);
+
+    try {
+      onAccountCreated(await createAccount(input));
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "Unable to save the account.");
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  return (
+    <main className="grid min-h-svh place-items-center bg-background px-6 py-12">
+      <section className="w-full max-w-md rounded-2xl border bg-card p-7 shadow-sm" aria-labelledby="setup-title">
+        <span className="grid size-10 place-items-center rounded-xl bg-primary text-lg font-bold text-primary-foreground">R</span>
+        <p className="mt-7 text-sm font-medium text-primary">Первый аккаунт</p>
+        <h1 id="setup-title" className="mt-1 text-2xl font-semibold tracking-tight">Подключите почту</h1>
+        <p className="mt-3 text-sm leading-6 text-muted-foreground">
+          Сохраним только настройки подключения. Пароль и токены будут добавлены в защищённое хранилище на следующем шаге.
+        </p>
+
+        <form className="mt-7 space-y-4" onSubmit={submit}>
+          <label className="setup-field">
+            <span>Название аккаунта</span>
+            <input onChange={(event) => updateField("displayName", event.target.value)} placeholder="Рабочая почта" required value={input.displayName} />
+          </label>
+          <label className="setup-field">
+            <span>Электронная почта</span>
+            <input onChange={(event) => updateField("email", event.target.value)} placeholder="name@company.com" required type="email" value={input.email} />
+          </label>
+          <div className="grid gap-4 sm:grid-cols-2">
+            <label className="setup-field">
+              <span>IMAP-сервер</span>
+              <input onChange={(event) => updateField("imapHost", event.target.value)} placeholder="imap.company.com" required value={input.imapHost} />
+            </label>
+            <label className="setup-field">
+              <span>SMTP-сервер</span>
+              <input onChange={(event) => updateField("smtpHost", event.target.value)} placeholder="smtp.company.com" required value={input.smtpHost} />
+            </label>
+          </div>
+          {error ? <p className="text-sm text-destructive" role="alert">{error}</p> : null}
+          <Button className="mt-2 w-full" disabled={isSubmitting} type="submit">
+            {isSubmitting ? "Сохраняем…" : "Продолжить"}
+          </Button>
+        </form>
+      </section>
+    </main>
+  );
+}
+
 function App() {
+  const [accounts, setAccounts] = useState<Account[] | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [activeFolder, setActiveFolder] = useState<Folder>("Входящие");
   const [selectedId, setSelectedId] = useState(messages[0].id);
   const [query, setQuery] = useState("");
@@ -140,6 +210,24 @@ function App() {
 
   const selectedMessage =
     messages.find((message) => message.id === selectedId) ?? messages[0];
+
+  useEffect(() => {
+    void listAccounts()
+      .then(setAccounts)
+      .catch((reason) => setLoadError(reason instanceof Error ? reason.message : "Unable to load accounts."));
+  }, []);
+
+  if (loadError) {
+    return <main className="grid min-h-svh place-items-center p-6 text-sm text-destructive">{loadError}</main>;
+  }
+
+  if (!accounts) {
+    return <main className="grid min-h-svh place-items-center text-sm text-muted-foreground">Загружаем настройки…</main>;
+  }
+
+  if (accounts.length === 0) {
+    return <AccountSetup onAccountCreated={(account) => setAccounts([account])} />;
+  }
 
   return (
     <TooltipProvider delayDuration={350}>

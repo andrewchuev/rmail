@@ -110,6 +110,32 @@
   width: 100%;
 }
 
+.setup-field {
+  display: grid;
+  gap: 0.375rem;
+}
+
+.setup-field span {
+  font-size: 0.8125rem;
+  font-weight: 500;
+}
+
+.setup-field input {
+  background: var(--background);
+  border: 1px solid var(--input);
+  border-radius: 0.5rem;
+  font-size: 0.875rem;
+  height: 2.5rem;
+  outline: 0;
+  padding: 0 0.75rem;
+  width: 100%;
+}
+
+.setup-field input:focus {
+  border-color: var(--ring);
+  box-shadow: 0 0 0 3px color-mix(in oklch, var(--ring), transparent 80%);
+}
+
 @media (max-width: 900px) {
   .compose-window {
     bottom: 1rem;
