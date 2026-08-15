@@ -29,11 +29,13 @@ import {
 } from "@/components/ui/tooltip";
 import {
   createAccount,
+  deleteAccount,
   listAccounts,
   testMailConnection,
   type Account,
   type CreateAccountInput,
 } from "@/lib/accounts";
+import { saveCredentials } from "@/lib/credentials";
 import "./App.css";
 
 type Folder = "Входящие" | "Отправленные" | "Черновики" | "В архиве" | "Корзина";
@@ -133,6 +135,8 @@ function AccountSetup({ onAccountCreated }: { onAccountCreated: (account: Accoun
   });
   const [error, setError] = useState<string | null>(null);
   const [connectionPassword, setConnectionPassword] = useState("");
+  const [vaultPassword, setVaultPassword] = useState("");
+  const [vaultPasswordConfirmation, setVaultPasswordConfirmation] = useState("");
   const [connectionMessage, setConnectionMessage] = useState<string | null>(null);
   const [isTesting, setTesting] = useState(false);
   const [isConnectionVerified, setConnectionVerified] = useState(false);
@@ -177,10 +181,29 @@ function AccountSetup({ onAccountCreated }: { onAccountCreated: (account: Accoun
       return;
     }
 
+    if (vaultPassword.length < 12) {
+      setError("Пароль хранилища должен содержать не менее 12 символов.");
+      return;
+    }
+
+    if (vaultPassword !== vaultPasswordConfirmation) {
+      setError("Пароли хранилища не совпадают.");
+      return;
+    }
+
     setSubmitting(true);
 
     try {
-      onAccountCreated(await createAccount(input));
+      const account = await createAccount(input);
+
+      try {
+        await saveCredentials(account.id, connectionPassword, vaultPassword);
+      } catch {
+        await deleteAccount(account.id).catch(() => undefined);
+        throw new Error("Не удалось сохранить данные для входа. Аккаунт не был добавлен.");
+      }
+
+      onAccountCreated(account);
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "Unable to save the account.");
     } finally {
@@ -189,13 +212,13 @@ function AccountSetup({ onAccountCreated }: { onAccountCreated: (account: Accoun
   }
 
   return (
-    <main className="grid min-h-svh place-items-center bg-background px-6 py-12">
+    <main className="grid min-h-svh place-items-center bg-background px-6 py-6">
       <section className="w-full max-w-md rounded-2xl border bg-card p-7 shadow-sm" aria-labelledby="setup-title">
         <span className="grid size-10 place-items-center rounded-xl bg-primary text-lg font-bold text-primary-foreground">R</span>
         <p className="mt-7 text-sm font-medium text-primary">Первый аккаунт</p>
         <h1 id="setup-title" className="mt-1 text-2xl font-semibold tracking-tight">Подключите почту</h1>
         <p className="mt-3 text-sm leading-6 text-muted-foreground">
-          Проверьте доступ к IMAP и SMTP. Пароль используется только для проверки и пока не сохраняется.
+          Проверьте доступ к IMAP и SMTP, затем защитите данные для входа паролем хранилища.
         </p>
 
         <form className="mt-7 space-y-4" onSubmit={submit}>
@@ -235,6 +258,25 @@ function AccountSetup({ onAccountCreated }: { onAccountCreated: (account: Accoun
             {isTesting ? "Проверяем подключение…" : "Проверить подключение"}
           </Button>
           {connectionMessage ? <p className="text-sm text-emerald-700 dark:text-emerald-400" role="status">{connectionMessage}</p> : null}
+          <label className="setup-field">
+            <span>Пароль хранилища</span>
+            <input
+              onChange={(event) => setVaultPassword(event.target.value)}
+              required
+              type="password"
+              value={vaultPassword}
+            />
+            <small>Не менее 12 символов. Его нельзя восстановить.</small>
+          </label>
+          <label className="setup-field">
+            <span>Повторите пароль хранилища</span>
+            <input
+              onChange={(event) => setVaultPasswordConfirmation(event.target.value)}
+              required
+              type="password"
+              value={vaultPasswordConfirmation}
+            />
+          </label>
           {error ? <p className="text-sm text-destructive" role="alert">{error}</p> : null}
           <Button className="mt-2 w-full" disabled={isSubmitting} type="submit">
             {isSubmitting ? "Сохраняем…" : "Продолжить"}

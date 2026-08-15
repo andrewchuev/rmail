@@ -91,6 +91,19 @@ impl Database {
         })
     }
 
+    pub fn delete_account(&self, account_id: i64) -> Result<(), String> {
+        let connection = self.connection.lock().map_err(|error| error.to_string())?;
+        let affected = connection
+            .execute("DELETE FROM accounts WHERE id = ?1", params![account_id])
+            .map_err(|error| error.to_string())?;
+
+        if affected == 0 {
+            return Err("Account was not found.".to_string());
+        }
+
+        Ok(())
+    }
+
     fn initialize(&self) -> Result<(), String> {
         let connection = self.connection.lock().map_err(|error| error.to_string())?;
         connection
@@ -165,5 +178,13 @@ mod tests {
                 .len(),
             1
         );
+
+        database
+            .delete_account(account.id)
+            .expect("account should be deleted");
+        assert!(database
+            .list_accounts()
+            .expect("accounts should list")
+            .is_empty());
     }
 }

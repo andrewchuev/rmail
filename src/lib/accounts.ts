@@ -40,6 +40,14 @@ export async function createAccount(input: CreateAccountInput): Promise<Account>
   return invoke<Account>("create_account", { input });
 }
 
+export async function deleteAccount(accountId: number): Promise<void> {
+  if (!isTauri()) {
+    throw new Error("Account setup is available in the desktop application.");
+  }
+
+  return invoke<void>("delete_account", { accountId });
+}
+
 export async function testMailConnection(input: MailConnectionInput): Promise<MailConnectionStatus> {
   if (!isTauri()) {
     throw new Error("Connection testing is available in the desktop application.");

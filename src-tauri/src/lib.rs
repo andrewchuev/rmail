@@ -23,6 +23,11 @@ fn create_account(
 }
 
 #[tauri::command]
+fn delete_account(account_id: i64, state: tauri::State<'_, AppState>) -> Result<(), String> {
+    state.database.delete_account(account_id)
+}
+
+#[tauri::command]
 async fn test_mail_connection(input: MailConnectionInput) -> Result<MailConnectionStatus, String> {
     test_connection(input).await
 }
@@ -44,6 +49,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             list_accounts,
             create_account,
+            delete_account,
             test_mail_connection
         ])
         .run(tauri::generate_context!())

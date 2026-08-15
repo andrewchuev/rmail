@@ -26,17 +26,17 @@ function credentialKey(accountId: number, name: "imapPassword" | "smtpPassword")
   return `account:${accountId}:${name}`;
 }
 
-export async function saveCredential(
+export async function saveCredentials(
   accountId: number,
-  name: "imapPassword" | "smtpPassword",
-  value: string,
+  password: string,
   masterPassword: string,
 ) {
   const { client, stronghold } = await openVault(masterPassword);
   const store = client.getStore();
-  const key = credentialKey(accountId, name);
+  const encodedPassword = Array.from(new TextEncoder().encode(password));
 
-  await store.insert(key, Array.from(new TextEncoder().encode(value)));
+  await store.insert(credentialKey(accountId, "imapPassword"), encodedPassword);
+  await store.insert(credentialKey(accountId, "smtpPassword"), encodedPassword);
   await stronghold.save();
 }
 
