@@ -1,6 +1,7 @@
 mod mail;
 mod storage;
 
+use keyring::Entry;
 use mail::{
     fetch_message_text, save_attachment, send_outgoing_message, sync_mailboxes, test_connection,
     MailConnectionInput, MailConnectionStatus, MessageBody, OutgoingMessageInput,
@@ -9,10 +10,21 @@ use serde::{Deserialize, Serialize};
 use storage::{
     Account, CachedMailbox, CachedMessage, CreateAccountInput, Database, Draft, SaveDraftInput,
 };
-use tauri::Manager;
+use tauri::{
+    menu::{Menu, MenuItem, PredefinedMenuItem},
+    tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
+    Emitter, Manager, WindowEvent,
+};
 
 struct AppState {
     database: Database,
+}
+
+const VAULT_PASSWORD_SERVICE: &str = "com.rmail.desktop";
+const VAULT_PASSWORD_ACCOUNT: &str = "stronghold-master-password";
+
+fn vault_password_entry() -> Result<Entry, String> {
+    Entry::new(VAULT_PASSWORD_SERVICE, VAULT_PASSWORD_ACCOUNT).map_err(|error| error.to_string())
 }
 
 #[derive(Deserialize)]
@@ -80,6 +92,22 @@ fn diagnostic_log_path(app: tauri::AppHandle) -> Result<String, String> {
 #[tauri::command]
 fn list_accounts(state: tauri::State<'_, AppState>) -> Result<Vec<Account>, String> {
     state.database.list_accounts()
+}
+
+#[tauri::command]
+fn load_stored_vault_password() -> Result<Option<String>, String> {
+    Ok(vault_password_entry()?.get_password().ok())
+}
+
+#[tauri::command]
+fn save_stored_vault_password(password: String) -> Result<(), String> {
+    if password.is_empty() {
+        return Err("The vault password cannot be empty.".to_string());
+    }
+
+    vault_password_entry()?
+        .set_password(&password)
+        .map_err(|error| error.to_string())
 }
 
 #[tauri::command]
@@ -238,6 +266,7 @@ async fn sync_account(
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        .plugin(tauri_plugin_notification::init())
         .plugin(
             tauri_plugin_log::Builder::new()
                 .level(tauri_plugin_log::log::LevelFilter::Info)
@@ -252,6 +281,7 @@ pub fn run() {
                 .build(),
         )
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_notification::init())
         .setup(|app| {
             let app_data_dir = app.path().app_local_data_dir()?;
             let database_path = app_data_dir.join("rmail.sqlite3");
@@ -260,12 +290,50 @@ pub fn run() {
 
             app.handle()
                 .plugin(tauri_plugin_stronghold::Builder::with_argon2(&salt_path).build())?;
+            let open = MenuItem::with_id(app, "open", "Открыть RMail", true, None::<&str>)?;
+            let sync =
+                MenuItem::with_id(app, "sync", "Синхронизировать сейчас", true, None::<&str>)?;
+            let separator = PredefinedMenuItem::separator(app)?;
+            let quit = MenuItem::with_id(app, "quit", "Выйти", true, None::<&str>)?;
+            let menu = Menu::with_items(app, &[&open, &sync, &separator, &quit])?;
+            TrayIconBuilder::with_id("main-tray")
+                .menu(&menu)
+                .tooltip("RMail")
+                .on_menu_event(|app, event| match event.id.as_ref() {
+                    "open" => {
+                        let _ = app.emit("tray-show", ());
+                    }
+                    "sync" => {
+                        let _ = app.emit("tray-sync", ());
+                    }
+                    "quit" => app.exit(0),
+                    _ => {}
+                })
+                .on_tray_icon_event(|tray, event| {
+                    if let TrayIconEvent::Click {
+                        button: MouseButton::Left,
+                        button_state: MouseButtonState::Up,
+                        ..
+                    } = event
+                    {
+                        let _ = tray.app_handle().emit("tray-show", ());
+                    }
+                })
+                .build(app)?;
             app.manage(AppState { database });
             Ok(())
+        })
+        .on_window_event(|window, event| {
+            if let WindowEvent::CloseRequested { api, .. } = event {
+                api.prevent_close();
+                let _ = window.hide();
+            }
         })
         .invoke_handler(tauri::generate_handler![
             diagnostic_log_path,
             list_accounts,
+            load_stored_vault_password,
+            save_stored_vault_password,
             create_account,
             delete_account,
             save_draft,

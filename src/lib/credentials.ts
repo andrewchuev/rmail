@@ -1,9 +1,26 @@
 import { appDataDir } from "@tauri-apps/api/path";
+import { invoke, isTauri } from "@tauri-apps/api/core";
 import { Client, Stronghold } from "@tauri-apps/plugin-stronghold";
 
 const clientName = "rmail";
 const vaultFileName = "credentials.hold";
 type CredentialName = "imapPassword" | "smtpPassword";
+
+export async function loadStoredVaultPassword(): Promise<string | null> {
+  if (!isTauri()) {
+    return null;
+  }
+
+  return invoke<string | null>("load_stored_vault_password");
+}
+
+export async function saveStoredVaultPassword(password: string): Promise<void> {
+  if (!isTauri()) {
+    return;
+  }
+
+  await invoke("save_stored_vault_password", { password });
+}
 
 async function openVault(masterPassword: string) {
   if (!masterPassword) {

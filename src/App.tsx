@@ -1,6 +1,9 @@
-import { useEffect, useMemo, useState, type FormEvent, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from "react";
 import { Archive, ChevronDown, Clock3, Inbox, MoreHorizontal, Paperclip, PenLine, Search, Settings2, Trash2 } from "lucide-react";
 import { save } from "@tauri-apps/plugin-dialog";
+import { isPermissionGranted, requestPermission, sendNotification } from "@tauri-apps/plugin-notification";
+import { listen } from "@tauri-apps/api/event";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 import { Button } from "@/components/ui/button";
 import {
   ResizableHandle,
@@ -36,7 +39,13 @@ import {
   type Draft,
   type MessageBody,
 } from "@/lib/accounts";
-import { deleteCredentials, readCredential, saveCredentials } from "@/lib/credentials";
+import {
+  deleteCredentials,
+  loadStoredVaultPassword,
+  readCredential,
+  saveCredentials,
+  saveStoredVaultPassword,
+} from "@/lib/credentials";
 import { connectionErrorMessage } from "@/lib/errors";
 import "./App.css";
 
@@ -59,6 +68,17 @@ type ComposeState = {
 };
 
 const emptyCompose: ComposeState = { recipients: "", subject: "", body: "" };
+const backgroundSettingsKey = "rmail.background-settings";
+type BackgroundSettings = { enabled: boolean; intervalMinutes: number; notifications: boolean; hideOnClose: boolean };
+const defaultBackgroundSettings: BackgroundSettings = { enabled: true, intervalMinutes: 5, notifications: true, hideOnClose: true };
+
+function loadBackgroundSettings(): BackgroundSettings {
+  try {
+    return { ...defaultBackgroundSettings, ...JSON.parse(localStorage.getItem(backgroundSettingsKey) ?? "{}") };
+  } catch {
+    return defaultBackgroundSettings;
+  }
+}
 
 function IconButton({
   label,
@@ -164,6 +184,7 @@ function AccountSetup({
 
       try {
         await saveCredentials(account.id, connectionPassword, vaultPassword);
+        await saveStoredVaultPassword(vaultPassword).catch(() => undefined);
       } catch {
         await deleteCredentials(account.id, vaultPassword).catch(() => undefined);
         await deleteAccount(account.id).catch(() => undefined);
@@ -233,7 +254,7 @@ function AccountSetup({
               type="password"
               value={vaultPassword}
             />
-            <small>{isAdditional ? "Используйте пароль, которым уже защищены подключённые аккаунты." : "Не менее 12 символов. Его нельзя восстановить."}</small>
+            <small>{isAdditional ? "Используйте пароль, которым уже защищены подключённые аккаунты." : "Не менее 12 символов. Он будет сохранён в защищённом хранилище системы."}</small>
           </label>
           {isAdditional ? null : <label className="setup-field">
             <span>Повторите пароль хранилища</span>
@@ -285,6 +306,10 @@ function App() {
   const [isAddingAccount, setAddingAccount] = useState(false);
   const [isSyncing, setSyncing] = useState(false);
   const [composeAccountId, setComposeAccountId] = useState<number | null>(null);
+  const [backgroundSettings, setBackgroundSettings] = useState<BackgroundSettings>(loadBackgroundSettings);
+  const [isSettingsOpen, setSettingsOpen] = useState(false);
+  const hasCompletedBackgroundSync = useRef(false);
+  const knownMessageKeys = useRef<Set<string>>(new Set());
 
   const visibleMessages = useMemo(() => {
     const normalizedQuery = query.trim().toLowerCase();
@@ -323,6 +348,38 @@ function App() {
     return () => {
       ignore = true;
     };
+  }, []);
+
+  useEffect(() => {
+    localStorage.setItem(backgroundSettingsKey, JSON.stringify(backgroundSettings));
+  }, [backgroundSettings]);
+
+  useEffect(() => {
+    let unlisten: (() => void) | undefined;
+    void listen("tray-show", () => {
+      void getCurrentWindow().show().then(() => getCurrentWindow().setFocus());
+    }).then((listener) => {
+      unlisten = listener;
+    });
+    return () => unlisten?.();
+  }, []);
+
+  useEffect(() => {
+    let unlisten: (() => void) | undefined;
+    void listen("tray-sync", () => void syncAllAccounts()).then((listener) => {
+      unlisten = listener;
+    });
+    return () => unlisten?.();
+  }, [vaultPassword, accounts]);
+
+  useEffect(() => {
+    void loadStoredVaultPassword()
+      .then((password) => {
+        if (password) {
+          setVaultPassword(password);
+        }
+      })
+      .catch(() => undefined);
   }, []);
 
   useEffect(() => {
@@ -474,6 +531,7 @@ function App() {
         throw new Error("Данные для входа не найдены в хранилище.");
       }
       setVaultPassword(unlockPassword);
+      void saveStoredVaultPassword(unlockPassword).catch(() => undefined);
       setUnlockPassword("");
     } catch {
       setUnlockError("Не удалось открыть хранилище. Проверьте пароль.");
@@ -569,7 +627,7 @@ function App() {
     }
   }
 
-  async function syncAllAccounts() {
+  async function syncAllAccounts(isBackground = false) {
     if (!vaultPassword || isSyncing) {
       setSyncMessage("Откройте хранилище, чтобы синхронизировать почту");
       return;
@@ -587,6 +645,15 @@ function App() {
       0,
     );
     setSyncRevision((current) => current + 1);
+    const inbox = await listUnifiedInbox();
+    const currentKeys = new Set(inbox.map(messageKey));
+    const newMessageCount = [...currentKeys].filter((key) => !knownMessageKeys.current.has(key)).length;
+    knownMessageKeys.current = currentKeys;
+    if (isBackground && hasCompletedBackgroundSync.current && successful.length && backgroundSettings.notifications && newMessageCount) {
+      const granted = await isPermissionGranted() || await requestPermission() === "granted";
+      if (granted) sendNotification({ title: "RMail", body: `Новых писем: ${newMessageCount}.` });
+    }
+    hasCompletedBackgroundSync.current = true;
     setSyncMessage(
       successful.length === accountList.length
         ? `Синхронизировано ящиков: ${successful.length}, писем: ${messageCount}`
@@ -594,6 +661,12 @@ function App() {
     );
     setSyncing(false);
   }
+
+  useEffect(() => {
+    if (!backgroundSettings.enabled || !vaultPassword || !accounts?.length) return;
+    const timer = window.setInterval(() => void syncAllAccounts(true), backgroundSettings.intervalMinutes * 60_000);
+    return () => window.clearInterval(timer);
+  }, [accounts, backgroundSettings, vaultPassword]);
 
   return (
     <TooltipProvider delayDuration={350}>
@@ -614,6 +687,13 @@ function App() {
                 </IconButton>
               </div>
 
+              <Button className="mt-3 w-full" onClick={() => setSettingsOpen((value) => !value)} size="sm" variant="ghost">Фоновая работа и уведомления</Button>
+              {isSettingsOpen ? <section className="mt-2 space-y-3 rounded-lg border bg-background/70 p-3 text-xs">
+                <label className="flex items-center justify-between gap-3"><span>Проверять в фоне</span><input checked={backgroundSettings.enabled} onChange={(event) => setBackgroundSettings((current) => ({ ...current, enabled: event.target.checked }))} type="checkbox" /></label>
+                <label className="grid gap-1"><span>Интервал</span><select onChange={(event) => setBackgroundSettings((current) => ({ ...current, intervalMinutes: Number(event.target.value) }))} value={backgroundSettings.intervalMinutes}><option value={1}>1 минута</option><option value={5}>5 минут</option><option value={15}>15 минут</option><option value={30}>30 минут</option><option value={60}>60 минут</option></select></label>
+                <label className="flex items-center justify-between gap-3"><span>Системные уведомления</span><input checked={backgroundSettings.notifications} onChange={(event) => setBackgroundSettings((current) => ({ ...current, notifications: event.target.checked }))} type="checkbox" /></label>
+              </section> : null}
+
               <Button className="mt-6 w-full justify-start" onClick={openCompose}>
                 <PenLine />
                 Написать
@@ -622,6 +702,18 @@ function App() {
               <Button className="mt-2 w-full" disabled={isSyncing} onClick={() => void syncAllAccounts()} size="sm" variant="secondary">
                 {isSyncing ? "Синхронизация…" : "Синхронизировать всё"}
               </Button>
+
+              {!vaultPassword ? (
+                <form className="mt-3 space-y-2 rounded-lg border bg-background/70 p-3" onSubmit={unlockVault}>
+                  <p className="text-xs leading-5 text-muted-foreground">Откройте хранилище один раз, чтобы сохранить ключ в системе.</p>
+                  <label className="setup-field">
+                    <span className="sr-only">Пароль хранилища</span>
+                    <input onChange={(event) => setUnlockPassword(event.target.value)} placeholder="Пароль хранилища" required type="password" value={unlockPassword} />
+                  </label>
+                  {unlockError ? <p className="text-xs text-destructive" role="alert">{unlockError}</p> : null}
+                  <Button className="w-full" size="sm" type="submit">Открыть хранилище</Button>
+                </form>
+              ) : null}
 
               <nav aria-label="Почтовые папки" className="mt-6 space-y-1">
                 <button
