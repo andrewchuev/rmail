@@ -3,7 +3,7 @@ mod storage;
 
 use mail::{sync_inbox, test_connection, MailConnectionInput, MailConnectionStatus};
 use serde::{Deserialize, Serialize};
-use storage::{Account, CreateAccountInput, Database};
+use storage::{Account, CachedMailbox, CachedMessage, CreateAccountInput, Database};
 use tauri::Manager;
 
 struct AppState {
@@ -24,6 +24,13 @@ struct SyncAccountStatus {
     message_count: usize,
 }
 
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct CachedMessagesInput {
+    account_id: i64,
+    mailbox_path: String,
+}
+
 #[tauri::command]
 fn list_accounts(state: tauri::State<'_, AppState>) -> Result<Vec<Account>, String> {
     state.database.list_accounts()
@@ -40,6 +47,24 @@ fn create_account(
 #[tauri::command]
 fn delete_account(account_id: i64, state: tauri::State<'_, AppState>) -> Result<(), String> {
     state.database.delete_account(account_id)
+}
+
+#[tauri::command]
+fn list_cached_mailboxes(
+    account_id: i64,
+    state: tauri::State<'_, AppState>,
+) -> Result<Vec<CachedMailbox>, String> {
+    state.database.list_cached_mailboxes(account_id)
+}
+
+#[tauri::command]
+fn list_cached_messages(
+    input: CachedMessagesInput,
+    state: tauri::State<'_, AppState>,
+) -> Result<Vec<CachedMessage>, String> {
+    state
+        .database
+        .list_cached_messages(input.account_id, &input.mailbox_path)
 }
 
 #[tauri::command]
@@ -89,6 +114,8 @@ pub fn run() {
             list_accounts,
             create_account,
             delete_account,
+            list_cached_mailboxes,
+            list_cached_messages,
             test_mail_connection,
             sync_account
         ])

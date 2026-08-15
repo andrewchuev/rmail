@@ -29,6 +29,19 @@ export type SyncAccountStatus = {
   messageCount: number;
 };
 
+export type CachedMailbox = {
+  path: string;
+  unreadCount: number;
+};
+
+export type CachedMessage = {
+  uid: number;
+  sender: string;
+  subject: string;
+  date: string;
+  isRead: boolean;
+};
+
 export async function listAccounts(): Promise<Account[]> {
   if (!isTauri()) {
     return [];
@@ -64,5 +77,18 @@ export async function testMailConnection(input: MailConnectionInput): Promise<Ma
 export async function syncAccount(accountId: number, password: string): Promise<SyncAccountStatus> {
   return invoke<SyncAccountStatus>("sync_account", {
     input: { accountId, password },
+  });
+}
+
+export async function listCachedMailboxes(accountId: number): Promise<CachedMailbox[]> {
+  return invoke<CachedMailbox[]>("list_cached_mailboxes", { accountId });
+}
+
+export async function listCachedMessages(
+  accountId: number,
+  mailboxPath: string,
+): Promise<CachedMessage[]> {
+  return invoke<CachedMessage[]>("list_cached_messages", {
+    input: { accountId, mailboxPath },
   });
 }

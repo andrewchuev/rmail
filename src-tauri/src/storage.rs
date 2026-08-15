@@ -24,6 +24,23 @@ pub struct Account {
     pub smtp_host: String,
 }
 
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CachedMailbox {
+    pub path: String,
+    pub unread_count: i64,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CachedMessage {
+    pub uid: u32,
+    pub sender: String,
+    pub subject: String,
+    pub date: String,
+    pub is_read: bool,
+}
+
 pub struct Database {
     connection: Mutex<Connection>,
 }
@@ -85,6 +102,66 @@ impl Database {
                 },
             )
             .map_err(|_| "Account was not found.".to_string())
+    }
+
+    pub fn list_cached_mailboxes(&self, account_id: i64) -> Result<Vec<CachedMailbox>, String> {
+        let connection = self.connection.lock().map_err(|error| error.to_string())?;
+        let mut statement = connection
+            .prepare(
+                "SELECT mailboxes.path,
+                        COALESCE(SUM(CASE WHEN messages.is_read = 0 THEN 1 ELSE 0 END), 0) AS unread_count
+                 FROM mailboxes
+                 LEFT JOIN messages
+                   ON messages.account_id = mailboxes.account_id
+                  AND messages.mailbox_path = mailboxes.path
+                 WHERE mailboxes.account_id = ?1
+                 GROUP BY mailboxes.path
+                 ORDER BY CASE WHEN mailboxes.path = 'INBOX' THEN 0 ELSE 1 END, mailboxes.path",
+            )
+            .map_err(|error| error.to_string())?;
+        let mailboxes = statement
+            .query_map(params![account_id], |row| {
+                Ok(CachedMailbox {
+                    path: row.get(0)?,
+                    unread_count: row.get(1)?,
+                })
+            })
+            .map_err(|error| error.to_string())?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|error| error.to_string())?;
+
+        Ok(mailboxes)
+    }
+
+    pub fn list_cached_messages(
+        &self,
+        account_id: i64,
+        mailbox_path: &str,
+    ) -> Result<Vec<CachedMessage>, String> {
+        let connection = self.connection.lock().map_err(|error| error.to_string())?;
+        let mut statement = connection
+            .prepare(
+                "SELECT uid, sender, subject, date, is_read
+                 FROM messages
+                 WHERE account_id = ?1 AND mailbox_path = ?2
+                 ORDER BY uid DESC",
+            )
+            .map_err(|error| error.to_string())?;
+        let messages = statement
+            .query_map(params![account_id, mailbox_path], |row| {
+                Ok(CachedMessage {
+                    uid: row.get(0)?,
+                    sender: row.get(1)?,
+                    subject: row.get(2)?,
+                    date: row.get(3)?,
+                    is_read: row.get(4)?,
+                })
+            })
+            .map_err(|error| error.to_string())?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|error| error.to_string())?;
+
+        Ok(messages)
     }
 
     pub fn create_account(&self, input: CreateAccountInput) -> Result<Account, String> {
@@ -304,10 +381,19 @@ mod tests {
             )
             .expect("snapshot should persist");
 
-        let connection = database.connection.lock().expect("connection should lock");
-        let count: i64 = connection
-            .query_row("SELECT COUNT(*) FROM messages", [], |row| row.get(0))
-            .expect("messages should count");
+        let count: i64 = {
+            let connection = database.connection.lock().expect("connection should lock");
+            connection
+                .query_row("SELECT COUNT(*) FROM messages", [], |row| row.get(0))
+                .expect("messages should count")
+        };
         assert_eq!(count, 1);
+        assert_eq!(
+            database
+                .list_cached_mailboxes(account.id)
+                .expect("mailboxes should list")[0]
+                .unread_count,
+            1
+        );
     }
 }

@@ -1,19 +1,5 @@
 import { useEffect, useMemo, useState, type FormEvent, type ReactNode } from "react";
-import {
-  Archive,
-  ChevronDown,
-  Clock3,
-  Inbox,
-  MoreHorizontal,
-  Paperclip,
-  PenLine,
-  Search,
-  Send,
-  Settings2,
-  Star,
-  Trash2,
-  type LucideIcon,
-} from "lucide-react";
+import { Archive, ChevronDown, Clock3, Inbox, MoreHorizontal, Paperclip, PenLine, Search, Settings2, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
   ResizableHandle,
@@ -31,80 +17,21 @@ import {
   createAccount,
   deleteAccount,
   listAccounts,
+  listCachedMailboxes,
+  listCachedMessages,
   syncAccount,
   testMailConnection,
   type Account,
+  type CachedMailbox,
+  type CachedMessage,
   type CreateAccountInput,
 } from "@/lib/accounts";
 import { saveCredentials } from "@/lib/credentials";
 import "./App.css";
 
-type Folder = "Входящие" | "Отправленные" | "Черновики" | "В архиве" | "Корзина";
-
-type Message = {
-  id: string;
-  sender: string;
-  address: string;
-  subject: string;
-  preview: string;
-  body: string;
-  time: string;
-  unread?: boolean;
-  starred?: boolean;
-  attachments?: string[];
-};
-
-const folders: { name: Folder; icon: LucideIcon; count?: number }[] = [
-  { name: "Входящие", icon: Inbox, count: 7 },
-  { name: "Отправленные", icon: Send },
-  { name: "Черновики", icon: PenLine, count: 2 },
-  { name: "В архиве", icon: Archive },
-  { name: "Корзина", icon: Trash2 },
-];
-
-const messages: Message[] = [
-  {
-    id: "design",
-    sender: "Анна Соколова",
-    address: "anna@northstar.studio",
-    subject: "Макеты для релиза",
-    preview: "Обновила экраны и оставила несколько вопросов по пустым состояниям.",
-    body: "Привет!\n\nОбновила основные экраны для первого релиза и добавила состояния пустого ящика. Посмотри, пожалуйста, комментарии в макете — особенно сценарий первого подключения аккаунта.\n\nЕсли всё выглядит хорошо, передам в разработку завтра утром.",
-    time: "10:42",
-    unread: true,
-    starred: true,
-    attachments: ["rmail-release.fig", "notes.pdf"],
-  },
-  {
-    id: "deploy",
-    sender: "Dev Team",
-    address: "dev@rmail.app",
-    subject: "Деплой запланирован на пятницу",
-    preview: "Подтвердили окно обслуживания: 18:00–18:30 UTC.",
-    body: "Команда,\n\nПодтвердили окно обслуживания: пятница, 18:00–18:30 UTC. В этот период приложение может быть недоступно несколько минут.\n\nСпасибо!",
-    time: "09:18",
-    unread: true,
-  },
-  {
-    id: "invoice",
-    sender: "Мария Климова",
-    address: "maria@studio.local",
-    subject: "Счёт за август",
-    preview: "Прикладываю счёт и акт. Дай знать, если нужны правки.",
-    body: "Добрый день!\n\nПрикладываю счёт и акт за август. Если нужны правки по реквизитам или описанию работ, напиши — оперативно поправлю.\n\nМария",
-    time: "Вчера",
-    attachments: ["invoice-august.pdf"],
-  },
-  {
-    id: "research",
-    sender: "Алексей Воронцов",
-    address: "alexey@product.team",
-    subject: "Исследование почтовых сценариев",
-    preview: "Собрал заметки по triage, поиску и работе офлайн.",
-    body: "Привет!\n\nСобрал заметки по основным сценариям: triage, поиск и работа в офлайне. Предлагаю обсудить приоритеты на планировании.\n\nАлексей",
-    time: "Вт",
-  },
-];
+function folderLabel(path: string) {
+  return path.toUpperCase() === "INBOX" ? "Входящие" : path;
+}
 
 function IconButton({
   label,
@@ -291,35 +218,66 @@ function AccountSetup({ onAccountCreated }: { onAccountCreated: (account: Accoun
 function App() {
   const [accounts, setAccounts] = useState<Account[] | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
-  const [activeFolder, setActiveFolder] = useState<Folder>("Входящие");
-  const [selectedId, setSelectedId] = useState(messages[0].id);
+  const [mailboxes, setMailboxes] = useState<CachedMailbox[]>([]);
+  const [cachedMessages, setCachedMessages] = useState<CachedMessage[]>([]);
+  const [activeFolder, setActiveFolder] = useState("INBOX");
+  const [selectedId, setSelectedId] = useState<number | null>(null);
   const [query, setQuery] = useState("");
   const [isComposeOpen, setComposeOpen] = useState(false);
   const [syncMessage, setSyncMessage] = useState("Откройте хранилище, чтобы синхронизировать почту");
+  const [syncRevision, setSyncRevision] = useState(0);
 
   const visibleMessages = useMemo(() => {
     const normalizedQuery = query.trim().toLowerCase();
 
     if (!normalizedQuery) {
-      return messages;
+      return cachedMessages;
     }
 
-    return messages.filter((message) =>
-      [message.sender, message.subject, message.preview]
+    return cachedMessages.filter((message) =>
+      [message.sender, message.subject]
         .join(" ")
         .toLowerCase()
         .includes(normalizedQuery),
     );
-  }, [query]);
+  }, [cachedMessages, query]);
 
   const selectedMessage =
-    messages.find((message) => message.id === selectedId) ?? messages[0];
+    cachedMessages.find((message) => message.uid === selectedId) ?? null;
 
   useEffect(() => {
     void listAccounts()
       .then(setAccounts)
       .catch((reason) => setLoadError(reason instanceof Error ? reason.message : "Unable to load accounts."));
   }, []);
+
+  useEffect(() => {
+    const account = accounts?.[0];
+    if (!account) {
+      return;
+    }
+
+    void listCachedMailboxes(account.id)
+      .then((items) => {
+        setMailboxes(items);
+        setActiveFolder((current) => items.some((mailbox) => mailbox.path === current) ? current : (items[0]?.path ?? "INBOX"));
+      })
+      .catch(() => setSyncMessage("Не удалось загрузить локальный кеш"));
+  }, [accounts, syncRevision]);
+
+  useEffect(() => {
+    const account = accounts?.[0];
+    if (!account) {
+      return;
+    }
+
+    void listCachedMessages(account.id, activeFolder)
+      .then((items) => {
+        setCachedMessages(items);
+        setSelectedId(items[0]?.uid ?? null);
+      })
+      .catch(() => setSyncMessage("Не удалось загрузить письма из кеша"));
+  }, [accounts, activeFolder, syncRevision]);
 
   if (loadError) {
     return <main className="grid min-h-svh place-items-center p-6 text-sm text-destructive">{loadError}</main>;
@@ -338,6 +296,7 @@ function App() {
           try {
             const status = await syncAccount(account.id, password);
             setSyncMessage(`Синхронизировано: папок — ${status.mailboxCount}, писем — ${status.messageCount}`);
+            setSyncRevision((current) => current + 1);
           } catch {
             setSyncMessage("Аккаунт сохранён, но первая синхронизация не удалась");
           }
@@ -371,18 +330,18 @@ function App() {
               </Button>
 
               <nav aria-label="Почтовые папки" className="mt-6 space-y-1">
-                {folders.map(({ count, icon: Icon, name }) => (
+                {mailboxes.map((mailbox) => (
                   <button
-                    aria-current={activeFolder === name ? "page" : undefined}
+                    aria-current={activeFolder === mailbox.path ? "page" : undefined}
                     className="folder-link"
-                    data-active={activeFolder === name}
-                    key={name}
-                    onClick={() => setActiveFolder(name)}
+                    data-active={activeFolder === mailbox.path}
+                    key={mailbox.path}
+                    onClick={() => setActiveFolder(mailbox.path)}
                     type="button"
                   >
-                    <Icon className="size-4" />
-                    <span>{name}</span>
-                    {count ? <span className="ml-auto text-xs tabular-nums">{count}</span> : null}
+                    <Inbox className="size-4" />
+                    <span>{folderLabel(mailbox.path)}</span>
+                    {mailbox.unreadCount ? <span className="ml-auto text-xs tabular-nums">{mailbox.unreadCount}</span> : null}
                   </button>
                 ))}
               </nav>
@@ -405,7 +364,7 @@ function App() {
                 <div className="flex items-center justify-between">
                   <div>
                     <p className="text-xs font-medium text-muted-foreground">Основной ящик</p>
-                    <h1 className="mt-0.5 text-lg font-semibold">{activeFolder}</h1>
+                    <h1 className="mt-0.5 text-lg font-semibold">{folderLabel(activeFolder)}</h1>
                   </div>
                   <IconButton label="Дополнительные действия">
                     <MoreHorizontal />
@@ -429,28 +388,27 @@ function App() {
                     visibleMessages.map((message) => (
                       <button
                         className="message-row"
-                        data-selected={selectedId === message.id}
-                        key={message.id}
-                        onClick={() => setSelectedId(message.id)}
+                        data-selected={selectedId === message.uid}
+                        key={message.uid}
+                        onClick={() => setSelectedId(message.uid)}
                         type="button"
                       >
                         <div className="flex items-start gap-3">
-                          <span className="mt-1 size-2 shrink-0 rounded-full bg-primary opacity-0 data-[unread=true]:opacity-100" data-unread={message.unread} />
+                          <span className="mt-1 size-2 shrink-0 rounded-full bg-primary opacity-0 data-[unread=true]:opacity-100" data-unread={!message.isRead} />
                           <div className="min-w-0 flex-1 text-left">
                             <div className="flex items-center gap-3">
                               <p className="truncate text-sm font-medium">{message.sender}</p>
-                              <time className="ml-auto text-xs text-muted-foreground">{message.time}</time>
+                              <time className="ml-auto text-xs text-muted-foreground">{message.date}</time>
                             </div>
-                            <p className="mt-1 truncate text-sm" data-unread={message.unread}>{message.subject}</p>
-                            <p className="mt-1 line-clamp-2 text-xs leading-5 text-muted-foreground">{message.preview}</p>
+                            <p className="mt-1 truncate text-sm" data-unread={!message.isRead}>{message.subject}</p>
+                            <p className="mt-1 text-xs leading-5 text-muted-foreground">Синхронизированный заголовок</p>
                           </div>
-                          {message.starred ? <Star className="size-3.5 shrink-0 fill-amber-400 text-amber-400" /> : null}
                         </div>
                       </button>
                     ))
                   ) : (
                     <div className="grid min-h-48 place-items-center px-8 text-center text-sm text-muted-foreground">
-                      Ничего не найдено. Попробуйте другой запрос.
+                      {query ? "Ничего не найдено. Попробуйте другой запрос." : "В этой папке пока нет синхронизированных писем."}
                     </div>
                   )}
                 </div>
@@ -472,8 +430,9 @@ function App() {
               </header>
 
               <ScrollArea className="min-h-0 flex-1">
-                <div className="mx-auto max-w-3xl px-8 py-9">
-                  <div className="flex items-start gap-4">
+                {selectedMessage ? (
+                  <div className="mx-auto max-w-3xl px-8 py-9">
+                    <div className="flex items-start gap-4">
                     <span className="grid size-10 shrink-0 place-items-center rounded-full bg-violet-100 text-sm font-semibold text-violet-700">
                       {selectedMessage.sender[0]}
                     </span>
@@ -482,33 +441,22 @@ function App() {
                         <div>
                           <h2 className="text-xl font-semibold tracking-tight">{selectedMessage.subject}</h2>
                           <p className="mt-2 text-sm font-medium">{selectedMessage.sender}</p>
-                          <p className="text-sm text-muted-foreground">{selectedMessage.address} · мне</p>
+                          <p className="text-sm text-muted-foreground">Письмо из INBOX</p>
                         </div>
-                        <time className="ml-auto shrink-0 text-xs text-muted-foreground">{selectedMessage.time}</time>
+                        <time className="ml-auto shrink-0 text-xs text-muted-foreground">{selectedMessage.date}</time>
                       </div>
 
                       <div className="mail-body mt-8 whitespace-pre-line text-[0.95rem] leading-7 text-foreground/85">
-                        {selectedMessage.body}
-                      </div>
-
-                      {selectedMessage.attachments ? (
-                        <div className="mt-8 flex flex-wrap gap-2">
-                          {selectedMessage.attachments.map((attachment) => (
-                            <button className="attachment-chip" key={attachment} type="button">
-                              <Paperclip className="size-3.5" />
-                              {attachment}
-                            </button>
-                          ))}
-                        </div>
-                      ) : null}
-
-                      <div className="mt-10 flex gap-2 border-t pt-6">
-                        <Button>Ответить</Button>
-                        <Button variant="outline">Переслать</Button>
+                        Полный текст письма будет загружаться по запросу. Сейчас в локальном кеше доступны папки и заголовки.
                       </div>
                     </div>
                   </div>
-                </div>
+                  </div>
+                ) : (
+                  <div className="grid h-full place-items-center p-8 text-center text-sm text-muted-foreground">
+                    Выберите письмо, чтобы посмотреть его заголовок.
+                  </div>
+                )}
               </ScrollArea>
             </article>
           </ResizablePanel>
