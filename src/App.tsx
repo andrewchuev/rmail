@@ -16,6 +16,7 @@ import {
 } from "@/components/ui/tooltip";
 import {
   createAccount,
+  diagnosticLogPath,
   deleteDraft,
   deleteAccount,
   listAccounts,
@@ -87,6 +88,7 @@ function AccountSetup({ onAccountCreated }: { onAccountCreated: (account: Accoun
   const [vaultPassword, setVaultPassword] = useState("");
   const [vaultPasswordConfirmation, setVaultPasswordConfirmation] = useState("");
   const [connectionMessage, setConnectionMessage] = useState<string | null>(null);
+  const [diagnosticLog, setDiagnosticLog] = useState<string | null>(null);
   const [isTesting, setTesting] = useState(false);
   const [isConnectionVerified, setConnectionVerified] = useState(false);
   const [isSubmitting, setSubmitting] = useState(false);
@@ -100,6 +102,7 @@ function AccountSetup({ onAccountCreated }: { onAccountCreated: (account: Accoun
   async function testConnection() {
     setError(null);
     setConnectionMessage(null);
+    setDiagnosticLog(null);
     setConnectionVerified(false);
     setTesting(true);
 
@@ -116,6 +119,7 @@ function AccountSetup({ onAccountCreated }: { onAccountCreated: (account: Accoun
       setConnectionMessage(`Подключение подтверждено: найдено папок — ${status.mailboxes.length}.`);
     } catch (reason) {
       setError(connectionErrorMessage(reason));
+      void diagnosticLogPath().then(setDiagnosticLog).catch(() => undefined);
     } finally {
       setTesting(false);
     }
@@ -227,6 +231,7 @@ function AccountSetup({ onAccountCreated }: { onAccountCreated: (account: Accoun
             />
           </label>
           {error ? <p className="text-sm text-destructive" role="alert">{error}</p> : null}
+          {diagnosticLog ? <p className="text-xs leading-5 text-muted-foreground">Диагностический журнал: <code className="break-all">{diagnosticLog}</code></p> : null}
           <Button className="mt-2 w-full" disabled={isSubmitting} type="submit">
             {isSubmitting ? "Сохраняем…" : "Продолжить"}
           </Button>

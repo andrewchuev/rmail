@@ -81,6 +81,10 @@ export async function listAccounts(): Promise<Account[]> {
   return invoke<Account[]>("list_accounts");
 }
 
+export async function diagnosticLogPath(): Promise<string> {
+  return invoke<string>("diagnostic_log_path");
+}
+
 export async function saveMessageAttachment(
   accountId: number,
   mailboxPath: string,

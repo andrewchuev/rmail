@@ -83,18 +83,44 @@ pub struct OutgoingMessageInput {
 }
 
 pub async fn test_connection(input: MailConnectionInput) -> Result<MailConnectionStatus, String> {
-    let input = validate_input(input).map_err(|message| format!("input:{message}"))?;
-    let mailboxes = test_imap(&input)
-        .await
-        .map_err(|message| format!("imap:{message}"))?;
-    let smtp_ready = test_smtp(&input)
-        .await
-        .map_err(|_| "smtp:Unable to validate SMTP connection.".to_string())?;
+    let input = validate_input(input).map_err(|message| {
+        tauri_plugin_log::log::warn!("connection_check failed stage=input code=invalid_settings");
+        format!("input:{message}")
+    })?;
+    tauri_plugin_log::log::info!("connection_check started stage=imap");
+    let mailboxes = test_imap(&input).await.map_err(|message| {
+        tauri_plugin_log::log::warn!(
+            "connection_check failed stage=imap code={}",
+            imap_failure_code(&message)
+        );
+        format!("imap:{message}")
+    })?;
+    tauri_plugin_log::log::info!("connection_check succeeded stage=imap");
+    tauri_plugin_log::log::info!("connection_check started stage=smtp");
+    let smtp_ready = test_smtp(&input).await.map_err(|_| {
+        tauri_plugin_log::log::warn!(
+            "connection_check failed stage=smtp code=connection_or_authentication_failed"
+        );
+        "smtp:Unable to validate SMTP connection.".to_string()
+    })?;
+    tauri_plugin_log::log::info!("connection_check succeeded stage=smtp");
 
     Ok(MailConnectionStatus {
         mailboxes,
         smtp_ready,
     })
+}
+
+fn imap_failure_code(message: &str) -> &'static str {
+    match message {
+        "IMAP server is unavailable." => "server_unavailable",
+        "Unable to establish a secure IMAP connection." => "tls_failed",
+        "IMAP server did not respond." => "timeout",
+        "IMAP server closed the connection." => "connection_closed",
+        "Unable to authenticate with IMAP." => "authentication_failed",
+        "Unable to list IMAP mailboxes." => "mailbox_access_failed",
+        _ => "unknown",
+    }
 }
 
 pub async fn sync_inbox(input: MailConnectionInput) -> Result<InboxSnapshot, String> {

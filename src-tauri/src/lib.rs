@@ -65,6 +65,19 @@ struct SendMessageInput {
 }
 
 #[tauri::command]
+fn diagnostic_log_path(app: tauri::AppHandle) -> Result<String, String> {
+    app.path()
+        .app_log_dir()
+        .map(|directory| {
+            directory
+                .join("rmail-diagnostics.log")
+                .display()
+                .to_string()
+        })
+        .map_err(|_| "Unable to locate the diagnostic log.".to_string())
+}
+
+#[tauri::command]
 fn list_accounts(state: tauri::State<'_, AppState>) -> Result<Vec<Account>, String> {
     state.database.list_accounts()
 }
@@ -220,6 +233,19 @@ async fn sync_account(
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        .plugin(
+            tauri_plugin_log::Builder::new()
+                .level(tauri_plugin_log::log::LevelFilter::Info)
+                .targets([
+                    tauri_plugin_log::Target::new(tauri_plugin_log::TargetKind::Stdout),
+                    tauri_plugin_log::Target::new(tauri_plugin_log::TargetKind::LogDir {
+                        file_name: Some("rmail-diagnostics".to_string()),
+                    }),
+                ])
+                .max_file_size(512_000)
+                .rotation_strategy(tauri_plugin_log::RotationStrategy::KeepSome(3))
+                .build(),
+        )
         .plugin(tauri_plugin_dialog::init())
         .setup(|app| {
             let app_data_dir = app.path().app_local_data_dir()?;
@@ -233,6 +259,7 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            diagnostic_log_path,
             list_accounts,
             create_account,
             delete_account,
