@@ -1,6 +1,6 @@
 use std::{fs, path::Path, sync::Mutex};
 
-use rusqlite::{params, Connection};
+use rusqlite::{params, Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
 
 use crate::mail::{InboxSnapshot, MessageBody};
@@ -34,10 +34,14 @@ pub struct CachedMailbox {
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CachedMessage {
+    pub account_id: i64,
+    pub account_display_name: String,
+    pub mailbox_path: String,
     pub uid: u32,
     pub sender: String,
     pub subject: String,
     pub date: String,
+    pub internal_date: i64,
     pub is_read: bool,
 }
 
@@ -211,20 +215,61 @@ impl Database {
         let connection = self.connection.lock().map_err(|error| error.to_string())?;
         let mut statement = connection
             .prepare(
-                "SELECT uid, sender, subject, date, is_read
+                "SELECT messages.account_id, accounts.display_name, messages.mailbox_path,
+                        messages.uid, messages.sender, messages.subject, messages.date,
+                        messages.internal_date, messages.is_read
                  FROM messages
-                 WHERE account_id = ?1 AND mailbox_path = ?2
-                 ORDER BY uid DESC",
+                 JOIN accounts ON accounts.id = messages.account_id
+                 WHERE messages.account_id = ?1 AND messages.mailbox_path = ?2
+                 ORDER BY messages.internal_date DESC, messages.uid DESC",
             )
             .map_err(|error| error.to_string())?;
         let messages = statement
             .query_map(params![account_id, mailbox_path], |row| {
                 Ok(CachedMessage {
-                    uid: row.get(0)?,
-                    sender: row.get(1)?,
-                    subject: row.get(2)?,
-                    date: row.get(3)?,
-                    is_read: row.get(4)?,
+                    account_id: row.get(0)?,
+                    account_display_name: row.get(1)?,
+                    mailbox_path: row.get(2)?,
+                    uid: row.get(3)?,
+                    sender: row.get(4)?,
+                    subject: row.get(5)?,
+                    date: row.get(6)?,
+                    internal_date: row.get(7)?,
+                    is_read: row.get(8)?,
+                })
+            })
+            .map_err(|error| error.to_string())?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|error| error.to_string())?;
+
+        Ok(messages)
+    }
+
+    pub fn list_unified_inbox(&self) -> Result<Vec<CachedMessage>, String> {
+        let connection = self.connection.lock().map_err(|error| error.to_string())?;
+        let mut statement = connection
+            .prepare(
+                "SELECT messages.account_id, accounts.display_name, messages.mailbox_path,
+                        messages.uid, messages.sender, messages.subject, messages.date,
+                        messages.internal_date, messages.is_read
+                 FROM messages
+                 JOIN accounts ON accounts.id = messages.account_id
+                 WHERE messages.mailbox_path = 'INBOX' COLLATE NOCASE
+                 ORDER BY messages.internal_date DESC, messages.account_id ASC, messages.uid DESC",
+            )
+            .map_err(|error| error.to_string())?;
+        let messages = statement
+            .query_map([], |row| {
+                Ok(CachedMessage {
+                    account_id: row.get(0)?,
+                    account_display_name: row.get(1)?,
+                    mailbox_path: row.get(2)?,
+                    uid: row.get(3)?,
+                    sender: row.get(4)?,
+                    subject: row.get(5)?,
+                    date: row.get(6)?,
+                    internal_date: row.get(7)?,
+                    is_read: row.get(8)?,
                 })
             })
             .map_err(|error| error.to_string())?
@@ -414,12 +459,33 @@ impl Database {
             .map_err(|error| error.to_string())?;
 
         for mailbox in &snapshot.mailboxes {
+            if let Some(uid_validity) = mailbox.uid_validity {
+                let previous_uid_validity = transaction
+                    .query_row(
+                        "SELECT uid_validity FROM mailboxes WHERE account_id = ?1 AND path = ?2",
+                        params![account_id, mailbox.path],
+                        |row| row.get::<_, Option<i64>>(0),
+                    )
+                    .optional()
+                    .map_err(|error| error.to_string())?
+                    .flatten();
+                if previous_uid_validity != Some(i64::from(uid_validity)) {
+                    transaction
+                        .execute(
+                            "DELETE FROM messages WHERE account_id = ?1 AND mailbox_path = ?2",
+                            params![account_id, mailbox.path],
+                        )
+                        .map_err(|error| error.to_string())?;
+                }
+            }
             transaction
                 .execute(
-                    "INSERT INTO mailboxes (account_id, path, synced_at)
-                     VALUES (?1, ?2, CURRENT_TIMESTAMP)
-                     ON CONFLICT(account_id, path) DO UPDATE SET synced_at = CURRENT_TIMESTAMP",
-                    params![account_id, mailbox.path],
+                    "INSERT INTO mailboxes (account_id, path, uid_validity, synced_at)
+                     VALUES (?1, ?2, ?3, CURRENT_TIMESTAMP)
+                     ON CONFLICT(account_id, path) DO UPDATE SET
+                       uid_validity = COALESCE(excluded.uid_validity, mailboxes.uid_validity),
+                       synced_at = CURRENT_TIMESTAMP",
+                    params![account_id, mailbox.path, mailbox.uid_validity],
                 )
                 .map_err(|error| error.to_string())?;
         }
@@ -427,12 +493,13 @@ impl Database {
         for message in &snapshot.messages {
             transaction
                 .execute(
-                    "INSERT INTO messages (account_id, mailbox_path, uid, sender, subject, date, is_read, synced_at)
-                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, CURRENT_TIMESTAMP)
+                    "INSERT INTO messages (account_id, mailbox_path, uid, sender, subject, date, internal_date, is_read, synced_at)
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, CURRENT_TIMESTAMP)
                      ON CONFLICT(account_id, mailbox_path, uid) DO UPDATE SET
                        sender = excluded.sender,
                        subject = excluded.subject,
                        date = excluded.date,
+                       internal_date = excluded.internal_date,
                        is_read = excluded.is_read,
                        synced_at = CURRENT_TIMESTAMP",
                     params![
@@ -442,6 +509,7 @@ impl Database {
                         message.sender,
                         message.subject,
                         message.date,
+                        message.internal_date,
                         message.is_read
                     ],
                 )
@@ -468,6 +536,7 @@ impl Database {
                  CREATE TABLE IF NOT EXISTS mailboxes (
                      account_id INTEGER NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
                      path TEXT NOT NULL,
+                     uid_validity INTEGER,
                      synced_at TEXT NOT NULL,
                      PRIMARY KEY (account_id, path)
                  );
@@ -478,6 +547,7 @@ impl Database {
                      sender TEXT NOT NULL,
                      subject TEXT NOT NULL,
                      date TEXT NOT NULL,
+                     internal_date INTEGER NOT NULL DEFAULT 0,
                      is_read INTEGER NOT NULL,
                      synced_at TEXT NOT NULL,
                      PRIMARY KEY (account_id, mailbox_path, uid)
@@ -523,7 +593,14 @@ impl Database {
                      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
                  );",
             )
-            .map_err(|error| error.to_string())
+            .map_err(|error| error.to_string())?;
+        add_column_if_missing(&connection, "mailboxes", "uid_validity", "INTEGER")?;
+        add_column_if_missing(
+            &connection,
+            "messages",
+            "internal_date",
+            "INTEGER NOT NULL DEFAULT 0",
+        )
     }
 
     #[cfg(test)]
@@ -536,6 +613,33 @@ impl Database {
         database.initialize()?;
         Ok(database)
     }
+}
+
+fn add_column_if_missing(
+    connection: &Connection,
+    table: &str,
+    column: &str,
+    definition: &str,
+) -> Result<(), String> {
+    let mut statement = connection
+        .prepare(&format!("PRAGMA table_info({table})"))
+        .map_err(|error| error.to_string())?;
+    let exists = statement
+        .query_map([], |row| row.get::<_, String>(1))
+        .map_err(|error| error.to_string())?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|error| error.to_string())?
+        .iter()
+        .any(|name| name == column);
+    if !exists {
+        connection
+            .execute_batch(&format!(
+                "ALTER TABLE {table} ADD COLUMN {column} {definition}"
+            ))
+            .map_err(|error| error.to_string())?;
+    }
+
+    Ok(())
 }
 
 fn validate_input(input: CreateAccountInput) -> Result<CreateAccountInput, String> {
@@ -628,9 +732,11 @@ mod tests {
                     mailboxes: vec![
                         MailboxSnapshot {
                             path: "INBOX".to_string(),
+                            uid_validity: Some(1),
                         },
                         MailboxSnapshot {
                             path: "Sent".to_string(),
+                            uid_validity: Some(1),
                         },
                     ],
                     messages: vec![MessageSnapshot {
@@ -639,6 +745,7 @@ mod tests {
                         sender: "Sender".to_string(),
                         subject: "Subject".to_string(),
                         date: "Today".to_string(),
+                        internal_date: 1_700_000_000,
                         is_read: false,
                     }],
                 },
@@ -724,5 +831,110 @@ mod tests {
         database
             .delete_draft(updated.id)
             .expect("draft should delete");
+    }
+
+    #[test]
+    fn lists_inbox_messages_from_every_account() {
+        let database = Database::in_memory().expect("database should initialize");
+        let first = database
+            .create_account(CreateAccountInput {
+                email: "first@example.com".to_string(),
+                display_name: "First".to_string(),
+                imap_host: "imap.first.example.com".to_string(),
+                smtp_host: "smtp.first.example.com".to_string(),
+            })
+            .expect("first account should be created");
+        let second = database
+            .create_account(CreateAccountInput {
+                email: "second@example.com".to_string(),
+                display_name: "Second".to_string(),
+                imap_host: "imap.second.example.com".to_string(),
+                smtp_host: "smtp.second.example.com".to_string(),
+            })
+            .expect("second account should be created");
+
+        for (account, uid, internal_date) in [(&first, 1, 10), (&second, 1, 20)] {
+            database
+                .store_inbox_snapshot(
+                    account.id,
+                    &InboxSnapshot {
+                        mailboxes: vec![MailboxSnapshot {
+                            path: "INBOX".to_string(),
+                            uid_validity: Some(1),
+                        }],
+                        messages: vec![MessageSnapshot {
+                            mailbox_path: "INBOX".to_string(),
+                            uid,
+                            sender: "Sender".to_string(),
+                            subject: "Subject".to_string(),
+                            date: "Today".to_string(),
+                            internal_date,
+                            is_read: false,
+                        }],
+                    },
+                )
+                .expect("snapshot should persist");
+        }
+
+        let messages = database
+            .list_unified_inbox()
+            .expect("unified inbox should list");
+        assert_eq!(messages.len(), 2);
+        assert_eq!(messages[0].account_display_name, "Second");
+        assert_eq!(messages[1].account_display_name, "First");
+    }
+
+    #[test]
+    fn clears_cached_body_when_uid_validity_changes() {
+        let database = Database::in_memory().expect("database should initialize");
+        let account = database
+            .create_account(CreateAccountInput {
+                email: "hello@example.com".to_string(),
+                display_name: "RMail".to_string(),
+                imap_host: "imap.example.com".to_string(),
+                smtp_host: "smtp.example.com".to_string(),
+            })
+            .expect("account should be created");
+        let snapshot = |uid_validity| InboxSnapshot {
+            mailboxes: vec![MailboxSnapshot {
+                path: "INBOX".to_string(),
+                uid_validity: Some(uid_validity),
+            }],
+            messages: vec![MessageSnapshot {
+                mailbox_path: "INBOX".to_string(),
+                uid: 1,
+                sender: "Sender".to_string(),
+                subject: "Subject".to_string(),
+                date: "Today".to_string(),
+                internal_date: 1,
+                is_read: false,
+            }],
+        };
+        database
+            .store_inbox_snapshot(account.id, &snapshot(1))
+            .expect("snapshot should persist");
+        database
+            .store_message_body(
+                account.id,
+                "INBOX",
+                1,
+                &MessageBody {
+                    text: "Cached body".to_string(),
+                    html: None,
+                    attachments: Vec::new(),
+                },
+            )
+            .expect("body should persist");
+
+        database
+            .store_inbox_snapshot(account.id, &snapshot(2))
+            .expect("updated snapshot should persist");
+
+        assert_eq!(
+            database
+                .get_cached_message_body(account.id, "INBOX", 1)
+                .expect("body should load"),
+            None
+        );
     }
 }

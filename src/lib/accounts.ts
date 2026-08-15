@@ -35,10 +35,14 @@ export type CachedMailbox = {
 };
 
 export type CachedMessage = {
+  accountId: number;
+  accountDisplayName: string;
+  mailboxPath: string;
   uid: number;
   sender: string;
   subject: string;
   date: string;
+  internalDate: number;
   isRead: boolean;
 };
 
@@ -155,6 +159,10 @@ export async function listCachedMessages(
   return invoke<CachedMessage[]>("list_cached_messages", {
     input: { accountId, mailboxPath },
   });
+}
+
+export async function listUnifiedInbox(): Promise<CachedMessage[]> {
+  return invoke<CachedMessage[]>("list_unified_inbox");
 }
 
 export async function loadMessageBody(

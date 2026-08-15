@@ -22,6 +22,7 @@ import {
   listAccounts,
   listCachedMailboxes,
   listCachedMessages,
+  listUnifiedInbox,
   loadMessageBody,
   saveMessageAttachment,
   saveDraft,
@@ -45,6 +46,10 @@ function folderLabel(path: string) {
 
 function attachmentFileName(name: string) {
   return name.replace(/[\\/]/g, "_").trim() || "attachment";
+}
+
+function messageKey(message: Pick<CachedMessage, "accountId" | "mailboxPath" | "uid">) {
+  return `${message.accountId}:${message.mailboxPath}:${message.uid}`;
 }
 
 type ComposeState = {
@@ -76,7 +81,15 @@ function IconButton({
   );
 }
 
-function AccountSetup({ onAccountCreated }: { onAccountCreated: (account: Account, password: string, vaultPassword: string) => Promise<void> }) {
+function AccountSetup({
+  isAdditional = false,
+  onAccountCreated,
+  onCancel,
+}: {
+  isAdditional?: boolean;
+  onAccountCreated: (account: Account, password: string, vaultPassword: string) => Promise<void>;
+  onCancel?: () => void;
+}) {
   const [input, setInput] = useState<CreateAccountInput>({
     displayName: "",
     email: "",
@@ -139,7 +152,7 @@ function AccountSetup({ onAccountCreated }: { onAccountCreated: (account: Accoun
       return;
     }
 
-    if (vaultPassword !== vaultPasswordConfirmation) {
+    if (!isAdditional && vaultPassword !== vaultPasswordConfirmation) {
       setError("Пароли хранилища не совпадают.");
       return;
     }
@@ -169,7 +182,7 @@ function AccountSetup({ onAccountCreated }: { onAccountCreated: (account: Accoun
     <main className="grid min-h-svh place-items-center bg-background px-6 py-6">
       <section className="w-full max-w-md rounded-2xl border bg-card p-7 shadow-sm" aria-labelledby="setup-title">
         <span className="grid size-10 place-items-center rounded-xl bg-primary text-lg font-bold text-primary-foreground">R</span>
-        <p className="mt-7 text-sm font-medium text-primary">Первый аккаунт</p>
+        <p className="mt-7 text-sm font-medium text-primary">{isAdditional ? "Новый аккаунт" : "Первый аккаунт"}</p>
         <h1 id="setup-title" className="mt-1 text-2xl font-semibold tracking-tight">Подключите почту</h1>
         <p className="mt-3 text-sm leading-6 text-muted-foreground">
           Проверьте доступ к IMAP и SMTP, затем защитите данные для входа паролем хранилища.
@@ -213,16 +226,16 @@ function AccountSetup({ onAccountCreated }: { onAccountCreated: (account: Accoun
           </Button>
           {connectionMessage ? <p className="text-sm text-emerald-700 dark:text-emerald-400" role="status">{connectionMessage}</p> : null}
           <label className="setup-field">
-            <span>Пароль хранилища</span>
+            <span>{isAdditional ? "Пароль текущего хранилища" : "Пароль хранилища"}</span>
             <input
               onChange={(event) => setVaultPassword(event.target.value)}
               required
               type="password"
               value={vaultPassword}
             />
-            <small>Не менее 12 символов. Его нельзя восстановить.</small>
+            <small>{isAdditional ? "Используйте пароль, которым уже защищены подключённые аккаунты." : "Не менее 12 символов. Его нельзя восстановить."}</small>
           </label>
-          <label className="setup-field">
+          {isAdditional ? null : <label className="setup-field">
             <span>Повторите пароль хранилища</span>
             <input
               onChange={(event) => setVaultPasswordConfirmation(event.target.value)}
@@ -230,12 +243,13 @@ function AccountSetup({ onAccountCreated }: { onAccountCreated: (account: Accoun
               type="password"
               value={vaultPasswordConfirmation}
             />
-          </label>
+          </label>}
           {error ? <p className="text-sm text-destructive" role="alert">{error}</p> : null}
           {diagnosticLog ? <p className="text-xs leading-5 text-muted-foreground">Диагностический журнал: <code className="break-all">{diagnosticLog}</code></p> : null}
           <Button className="mt-2 w-full" disabled={isSubmitting} type="submit">
             {isSubmitting ? "Сохраняем…" : "Продолжить"}
           </Button>
+          {onCancel ? <Button className="w-full" onClick={onCancel} type="button" variant="ghost">Отмена</Button> : null}
         </form>
       </section>
     </main>
@@ -247,8 +261,9 @@ function App() {
   const [loadError, setLoadError] = useState<string | null>(null);
   const [mailboxes, setMailboxes] = useState<CachedMailbox[]>([]);
   const [cachedMessages, setCachedMessages] = useState<CachedMessage[]>([]);
+  const [activeAccountId, setActiveAccountId] = useState<number | null>(null);
   const [activeFolder, setActiveFolder] = useState("INBOX");
-  const [selectedId, setSelectedId] = useState<number | null>(null);
+  const [selectedMessageKey, setSelectedMessageKey] = useState<string | null>(null);
   const [query, setQuery] = useState("");
   const [isComposeOpen, setComposeOpen] = useState(false);
   const [compose, setCompose] = useState<ComposeState>(emptyCompose);
@@ -267,6 +282,9 @@ function App() {
   const [contentMode, setContentMode] = useState<"text" | "html">("text");
   const [savingAttachmentPosition, setSavingAttachmentPosition] = useState<number | null>(null);
   const [attachmentMessage, setAttachmentMessage] = useState<string | null>(null);
+  const [isAddingAccount, setAddingAccount] = useState(false);
+  const [isSyncing, setSyncing] = useState(false);
+  const [composeAccountId, setComposeAccountId] = useState<number | null>(null);
 
   const visibleMessages = useMemo(() => {
     const normalizedQuery = query.trim().toLowerCase();
@@ -283,8 +301,9 @@ function App() {
     );
   }, [cachedMessages, query]);
 
-  const selectedMessage =
-    cachedMessages.find((message) => message.uid === selectedId) ?? null;
+  const selectedMessage = cachedMessages.find(
+    (message) => messageKey(message) === selectedMessageKey,
+  ) ?? null;
 
   useEffect(() => {
     let ignore = false;
@@ -307,10 +326,12 @@ function App() {
   }, []);
 
   useEffect(() => {
-    const account = accounts?.[0];
-    if (!account) {
+    if (activeAccountId === null) {
+      setMailboxes([]);
       return;
     }
+    const account = accounts?.find((item) => item.id === activeAccountId);
+    if (!account) return;
     let ignore = false;
 
     void listCachedMailboxes(account.id)
@@ -330,22 +351,24 @@ function App() {
     return () => {
       ignore = true;
     };
-  }, [accounts, syncRevision]);
+  }, [accounts, activeAccountId, syncRevision]);
 
   useEffect(() => {
-    const account = accounts?.[0];
-    if (!account) {
+    if (!accounts?.length) {
       return;
     }
     let ignore = false;
 
-    void listCachedMessages(account.id, activeFolder)
+    const loadMessages = activeAccountId === null
+      ? listUnifiedInbox()
+      : listCachedMessages(activeAccountId, activeFolder);
+    void loadMessages
       .then((items) => {
         if (ignore) {
           return;
         }
         setCachedMessages(items);
-        setSelectedId(items[0]?.uid ?? null);
+        setSelectedMessageKey(items[0] ? messageKey(items[0]) : null);
         setContentMode("text");
         setAttachmentMessage(null);
       })
@@ -358,11 +381,11 @@ function App() {
     return () => {
       ignore = true;
     };
-  }, [accounts, activeFolder, syncRevision]);
+  }, [accounts, activeAccountId, activeFolder, syncRevision]);
 
   useEffect(() => {
-    const account = accounts?.[0];
-    const message = cachedMessages.find((item) => item.uid === selectedId);
+    const message = selectedMessage;
+    const account = message ? accounts?.find((item) => item.id === message.accountId) : null;
     if (!account || !message || !vaultPassword) {
       setMessageBody(null);
       setBodyError(null);
@@ -380,7 +403,7 @@ function App() {
           throw new Error("Данные для входа не найдены в хранилище.");
         }
 
-        return loadMessageBody(account.id, activeFolder, message.uid, password);
+        return loadMessageBody(account.id, message.mailboxPath, message.uid, password);
       })
       .then((body) => {
         if (!ignore) {
@@ -401,7 +424,7 @@ function App() {
     return () => {
       ignore = true;
     };
-  }, [accounts, activeFolder, cachedMessages, selectedId, vaultPassword]);
+  }, [accounts, selectedMessage, vaultPassword]);
 
   if (loadError) {
     return <main className="grid min-h-svh place-items-center p-6 text-sm text-destructive">{loadError}</main>;
@@ -411,12 +434,17 @@ function App() {
     return <main className="grid min-h-svh place-items-center text-sm text-muted-foreground">Загружаем настройки…</main>;
   }
 
-  if (accounts.length === 0) {
+  if (accounts.length === 0 || isAddingAccount) {
     return (
       <AccountSetup
+        isAdditional={accounts.length > 0}
+        onCancel={accounts.length > 0 ? () => setAddingAccount(false) : undefined}
         onAccountCreated={async (account, password, newVaultPassword) => {
           setVaultPassword(newVaultPassword);
-          setAccounts([account]);
+          setAccounts((current) => [...(current ?? []), account]);
+          setActiveAccountId(account.id);
+          setActiveFolder("INBOX");
+          setAddingAccount(false);
 
           try {
             const status = await syncAccount(account.id, password);
@@ -429,6 +457,8 @@ function App() {
       />
     );
   }
+
+  const accountList = accounts;
 
   async function unlockVault(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -451,8 +481,8 @@ function App() {
   }
 
   async function downloadAttachment(position: number, name: string) {
-    const account = accounts?.[0];
     const message = selectedMessage;
+    const account = message ? accountList.find((item) => item.id === message.accountId) : null;
     if (!account || !message || !vaultPassword) {
       return;
     }
@@ -469,7 +499,7 @@ function App() {
       if (!password) {
         throw new Error("Данные для входа не найдены в хранилище.");
       }
-      await saveMessageAttachment(account.id, activeFolder, message.uid, position, password, destination);
+      await saveMessageAttachment(account.id, message.mailboxPath, message.uid, position, password, destination);
       setAttachmentMessage(`Вложение «${name}» сохранено.`);
     } catch (reason) {
       setAttachmentMessage(reason instanceof Error ? reason.message : "Не удалось сохранить вложение.");
@@ -482,11 +512,12 @@ function App() {
     setCompose(emptyCompose);
     setDraftId(null);
     setComposeMessage(null);
+    setComposeAccountId(activeAccountId ?? accountList[0]?.id ?? null);
     setComposeOpen(true);
   }
 
   async function saveComposeDraft(): Promise<Draft> {
-    const account = accounts?.[0];
+    const account = accountList.find((item) => item.id === composeAccountId);
     if (!account) {
       throw new Error("Аккаунт не найден.");
     }
@@ -511,7 +542,7 @@ function App() {
 
   async function handleSendMessage(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    const account = accounts?.[0];
+    const account = accountList.find((item) => item.id === composeAccountId);
     if (!account || !vaultPassword) {
       setComposeMessage("Откройте хранилище, чтобы отправить письмо.");
       return;
@@ -538,6 +569,32 @@ function App() {
     }
   }
 
+  async function syncAllAccounts() {
+    if (!vaultPassword || isSyncing) {
+      setSyncMessage("Откройте хранилище, чтобы синхронизировать почту");
+      return;
+    }
+
+    setSyncing(true);
+    const results = await Promise.allSettled(accountList.map(async (account) => {
+      const password = await readCredential(account.id, "imapPassword", vaultPassword);
+      if (!password) throw new Error("Credentials are unavailable.");
+      return syncAccount(account.id, password);
+    }));
+    const successful = results.filter((result) => result.status === "fulfilled");
+    const messageCount = successful.reduce(
+      (count, result) => count + result.value.messageCount,
+      0,
+    );
+    setSyncRevision((current) => current + 1);
+    setSyncMessage(
+      successful.length === accountList.length
+        ? `Синхронизировано ящиков: ${successful.length}, писем: ${messageCount}`
+        : `Синхронизировано ящиков: ${successful.length} из ${accountList.length}`,
+    );
+    setSyncing(false);
+  }
+
   return (
     <TooltipProvider delayDuration={350}>
       <main className="min-h-svh bg-background text-foreground">
@@ -552,7 +609,7 @@ function App() {
                   RMail
                   <ChevronDown className="size-3.5 text-muted-foreground" />
                 </button>
-                <IconButton label="Настройки">
+                <IconButton label="Добавить аккаунт" onClick={() => setAddingAccount(true)}>
                   <Settings2 />
                 </IconButton>
               </div>
@@ -562,13 +619,42 @@ function App() {
                 Написать
               </Button>
 
+              <Button className="mt-2 w-full" disabled={isSyncing} onClick={() => void syncAllAccounts()} size="sm" variant="secondary">
+                {isSyncing ? "Синхронизация…" : "Синхронизировать всё"}
+              </Button>
+
               <nav aria-label="Почтовые папки" className="mt-6 space-y-1">
-                {mailboxes.map((mailbox) => (
+                <button
+                  aria-current={activeAccountId === null ? "page" : undefined}
+                  className="folder-link"
+                  data-active={activeAccountId === null}
+                  onClick={() => setActiveAccountId(null)}
+                  type="button"
+                >
+                  <Inbox className="size-4" />
+                  <span>Все входящие</span>
+                </button>
+                <p className="px-2 pt-4 text-xs font-medium text-muted-foreground">Аккаунты</p>
+                {accountList.map((account) => (
+                  <button
+                    className="folder-link"
+                    data-active={activeAccountId === account.id}
+                    key={account.id}
+                    onClick={() => {
+                      setActiveAccountId(account.id);
+                      setActiveFolder("INBOX");
+                    }}
+                    type="button"
+                  >
+                    <span className="truncate">{account.displayName}</span>
+                  </button>
+                ))}
+                {activeAccountId === null ? null : mailboxes.map((mailbox) => (
                   <button
                     aria-current={activeFolder === mailbox.path ? "page" : undefined}
                     className="folder-link"
                     data-active={activeFolder === mailbox.path}
-                    key={mailbox.path}
+                    key={`${activeAccountId}:${mailbox.path}`}
                     onClick={() => setActiveFolder(mailbox.path)}
                     type="button"
                   >
@@ -596,8 +682,8 @@ function App() {
               <header className="border-b px-5 py-4">
                 <div className="flex items-center justify-between">
                   <div>
-                    <p className="text-xs font-medium text-muted-foreground">Основной ящик</p>
-                    <h1 className="mt-0.5 text-lg font-semibold">{folderLabel(activeFolder)}</h1>
+                    <p className="text-xs font-medium text-muted-foreground">{activeAccountId === null ? "Общий ящик" : accountList.find((account) => account.id === activeAccountId)?.displayName}</p>
+                    <h1 className="mt-0.5 text-lg font-semibold">{activeAccountId === null ? "Все входящие" : folderLabel(activeFolder)}</h1>
                   </div>
                   <IconButton label="Дополнительные действия">
                     <MoreHorizontal />
@@ -621,10 +707,10 @@ function App() {
                     visibleMessages.map((message) => (
                       <button
                         className="message-row"
-                        data-selected={selectedId === message.uid}
-                        key={message.uid}
+                        data-selected={selectedMessageKey === messageKey(message)}
+                        key={messageKey(message)}
                         onClick={() => {
-                          setSelectedId(message.uid);
+                          setSelectedMessageKey(messageKey(message));
                           setContentMode("text");
                         }}
                         type="button"
@@ -637,7 +723,7 @@ function App() {
                               <time className="ml-auto text-xs text-muted-foreground">{message.date}</time>
                             </div>
                             <p className="mt-1 truncate text-sm" data-unread={!message.isRead}>{message.subject}</p>
-                            <p className="mt-1 text-xs leading-5 text-muted-foreground">Синхронизированный заголовок</p>
+                            <p className="mt-1 text-xs leading-5 text-muted-foreground">{message.accountDisplayName} · {folderLabel(message.mailboxPath)}</p>
                           </div>
                         </div>
                       </button>
@@ -677,7 +763,7 @@ function App() {
                         <div>
                           <h2 className="text-xl font-semibold tracking-tight">{selectedMessage.subject}</h2>
                           <p className="mt-2 text-sm font-medium">{selectedMessage.sender}</p>
-                          <p className="text-sm text-muted-foreground">Письмо из INBOX</p>
+                          <p className="text-sm text-muted-foreground">{selectedMessage.accountDisplayName} · {folderLabel(selectedMessage.mailboxPath)}</p>
                         </div>
                         <time className="ml-auto shrink-0 text-xs text-muted-foreground">{selectedMessage.date}</time>
                       </div>
@@ -755,6 +841,12 @@ function App() {
               <span className="text-sm font-medium">Новое письмо</span>
               <Button onClick={() => setComposeOpen(false)} size="icon-xs" type="button" variant="ghost">×</Button>
             </div>
+            <label className="compose-field">
+              <span>От кого</span>
+              <select onChange={(event) => setComposeAccountId(Number(event.target.value))} value={composeAccountId ?? ""}>
+                {accountList.map((account) => <option key={account.id} value={account.id}>{account.displayName} · {account.email}</option>)}
+              </select>
+            </label>
             <label className="compose-field"><span>Кому</span><input autoFocus onChange={(event) => setCompose((current) => ({ ...current, recipients: event.target.value }))} placeholder="name@company.com, colleague@company.com" value={compose.recipients} /></label>
             <label className="compose-field"><span>Тема</span><input onChange={(event) => setCompose((current) => ({ ...current, subject: event.target.value }))} placeholder="Тема" value={compose.subject} /></label>
             <textarea aria-label="Текст письма" className="min-h-36 flex-1 resize-none p-4 outline-none" onChange={(event) => setCompose((current) => ({ ...current, body: event.target.value }))} placeholder="Напишите сообщение…" value={compose.body} />

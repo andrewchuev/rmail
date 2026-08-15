@@ -39,6 +39,7 @@ pub struct MailConnectionStatus {
 #[serde(rename_all = "camelCase")]
 pub struct MailboxSnapshot {
     pub path: String,
+    pub uid_validity: Option<u32>,
 }
 
 #[derive(Debug, Serialize)]
@@ -49,6 +50,7 @@ pub struct MessageSnapshot {
     pub sender: String,
     pub subject: String,
     pub date: String,
+    pub internal_date: i64,
     pub is_read: bool,
 }
 
@@ -128,7 +130,7 @@ fn imap_failure_code(message: &str) -> &'static str {
 pub async fn sync_mailboxes(input: MailConnectionInput) -> Result<InboxSnapshot, String> {
     let input = validate_input(input)?;
     let mut session = connect_session(&input).await?;
-    let mailboxes = within_timeout(
+    let mut mailboxes = within_timeout(
         session.list(None, Some("*")),
         "Unable to list IMAP mailboxes.",
     )
@@ -145,13 +147,17 @@ pub async fn sync_mailboxes(input: MailConnectionInput) -> Result<InboxSnapshot,
     })
     .map(|mailbox| MailboxSnapshot {
         path: mailbox.name().to_string(),
+        uid_validity: None,
     })
     .collect::<Vec<_>>();
     let mut messages = Vec::new();
 
-    for mailbox in &mailboxes {
+    for mailbox in &mut mailboxes {
         match sync_mailbox_headers(&mut session, &mailbox.path).await {
-            Ok(mut snapshot) => messages.append(&mut snapshot),
+            Ok((uid_validity, mut snapshot)) => {
+                mailbox.uid_validity = uid_validity;
+                messages.append(&mut snapshot);
+            }
             Err(_) => tauri_plugin_log::log::warn!("mail_sync skipped_mailbox_headers"),
         }
     }
@@ -166,11 +172,11 @@ pub async fn sync_mailboxes(input: MailConnectionInput) -> Result<InboxSnapshot,
 async fn sync_mailbox_headers(
     session: &mut async_imap::Session<async_native_tls::TlsStream<TcpStream>>,
     mailbox_path: &str,
-) -> Result<Vec<MessageSnapshot>, String> {
+) -> Result<(Option<u32>, Vec<MessageSnapshot>), String> {
     let selected =
         within_timeout(session.select(mailbox_path), "Unable to open a mailbox.").await?;
     if selected.exists == 0 {
-        return Ok(Vec::new());
+        return Ok((selected.uid_validity, Vec::new()));
     }
 
     let start = selected
@@ -179,7 +185,7 @@ async fn sync_mailbox_headers(
         .max(1);
     let sequence = format!("{start}:*");
     let messages = within_timeout(
-        session.fetch(sequence, "(UID FLAGS ENVELOPE RFC822.SIZE)"),
+        session.fetch(sequence, "(UID FLAGS ENVELOPE INTERNALDATE RFC822.SIZE)"),
         "Unable to fetch mailbox messages.",
     )
     .await?
@@ -190,7 +196,7 @@ async fn sync_mailbox_headers(
     .filter_map(|fetch| snapshot_message(mailbox_path, fetch))
     .collect::<Vec<_>>();
 
-    Ok(messages)
+    Ok((selected.uid_validity, messages))
 }
 
 pub async fn fetch_message_text(
@@ -368,6 +374,10 @@ fn snapshot_message(
             .date
             .as_deref()
             .map(decode_header)
+            .unwrap_or_default(),
+        internal_date: fetch
+            .internal_date()
+            .map(|date| date.timestamp())
             .unwrap_or_default(),
         is_read: fetch
             .flags()

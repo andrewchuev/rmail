@@ -124,6 +124,11 @@ fn list_cached_messages(
 }
 
 #[tauri::command]
+fn list_unified_inbox(state: tauri::State<'_, AppState>) -> Result<Vec<CachedMessage>, String> {
+    state.database.list_unified_inbox()
+}
+
+#[tauri::command]
 async fn load_message_body(
     input: LoadMessageBodyInput,
     state: tauri::State<'_, AppState>,
@@ -267,6 +272,7 @@ pub fn run() {
             delete_draft,
             list_cached_mailboxes,
             list_cached_messages,
+            list_unified_inbox,
             load_message_body,
             save_message_attachment,
             send_message,
