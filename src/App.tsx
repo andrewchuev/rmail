@@ -483,6 +483,12 @@ function App() {
     };
   }, [accounts, selectedMessage, vaultPassword]);
 
+  useEffect(() => {
+    if (!backgroundSettings.enabled || !vaultPassword || !accounts?.length) return;
+    const timer = window.setInterval(() => void syncAllAccounts(true), backgroundSettings.intervalMinutes * 60_000);
+    return () => window.clearInterval(timer);
+  }, [accounts, backgroundSettings, vaultPassword]);
+
   if (loadError) {
     return <main className="grid min-h-svh place-items-center p-6 text-sm text-destructive">{loadError}</main>;
   }
@@ -661,12 +667,6 @@ function App() {
     );
     setSyncing(false);
   }
-
-  useEffect(() => {
-    if (!backgroundSettings.enabled || !vaultPassword || !accounts?.length) return;
-    const timer = window.setInterval(() => void syncAllAccounts(true), backgroundSettings.intervalMinutes * 60_000);
-    return () => window.clearInterval(timer);
-  }, [accounts, backgroundSettings, vaultPassword]);
 
   return (
     <TooltipProvider delayDuration={350}>
