@@ -157,7 +157,7 @@ pub async fn sync_mailboxes(input: MailConnectionInput) -> Result<InboxSnapshot,
     let input = validate_input(input)?;
     let mut session = connect_session(&input).await?;
     let mut mailboxes = within_timeout(
-        session.list(None, Some("*")),
+        session.list(Some(""), Some("*")),
         "Unable to list IMAP mailboxes.",
     )
     .await?
@@ -340,7 +340,7 @@ async fn fetch_message_source(
 async fn test_imap(input: &MailConnectionInput) -> Result<Vec<String>, String> {
     let mut session = connect_session(input).await?;
     let mailboxes = within_timeout(
-        session.list(None, Some("*")),
+        session.list(Some(""), Some("*")),
         "Unable to list IMAP mailboxes.",
     )
     .await?

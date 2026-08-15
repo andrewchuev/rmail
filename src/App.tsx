@@ -5,6 +5,7 @@ import { isPermissionGranted, requestPermission, sendNotification } from "@tauri
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { Button } from "@/components/ui/button";
+import { AccountSetup } from "@/components/AccountSetup";
 import { SettingsPage } from "@/components/SettingsPage";
 import {
   ResizableHandle,
@@ -19,11 +20,7 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import {
-  createAccount,
-  connectGmail,
-  diagnosticLogPath,
   deleteDraft,
-  deleteAccount,
   listAccounts,
   listCachedMailboxes,
   listCachedMessages,
@@ -33,22 +30,15 @@ import {
   saveDraft,
   sendMessage,
   syncAccount,
-  testMailConnection,
   type Account,
   type CachedMailbox,
   type CachedMessage,
-  type CreateAccountInput,
   type Draft,
   type MessageBody,
 } from "@/lib/accounts";
 import {
-  deleteCredentials,
-  loadStoredVaultPassword,
   readCredential,
-  saveCredentials,
-  saveStoredVaultPassword,
 } from "@/lib/credentials";
-import { connectionErrorMessage } from "@/lib/errors";
 import { applyWindowSettings, loadBackgroundSettings, saveBackgroundSettings, type BackgroundSettings } from "@/lib/settings";
 import "./App.css";
 
@@ -116,202 +106,6 @@ function IconButton({
   );
 }
 
-function AccountSetup({
-  isAdditional = false,
-  onAccountCreated,
-  onCancel,
-  onGmailConnected,
-}: {
-  isAdditional?: boolean;
-  onAccountCreated: (account: Account, password: string, vaultPassword: string) => Promise<void>;
-  onCancel?: () => void;
-  onGmailConnected: (account: Account) => Promise<void>;
-}) {
-  const [input, setInput] = useState<CreateAccountInput>({
-    displayName: "",
-    email: "",
-    imapHost: "",
-    smtpHost: "",
-  });
-  const [error, setError] = useState<string | null>(null);
-  const [connectionPassword, setConnectionPassword] = useState("");
-  const [vaultPassword, setVaultPassword] = useState("");
-  const [vaultPasswordConfirmation, setVaultPasswordConfirmation] = useState("");
-  const [connectionMessage, setConnectionMessage] = useState<string | null>(null);
-  const [diagnosticLog, setDiagnosticLog] = useState<string | null>(null);
-  const [isTesting, setTesting] = useState(false);
-  const [isConnectionVerified, setConnectionVerified] = useState(false);
-  const [isSubmitting, setSubmitting] = useState(false);
-  const [isGmailConnecting, setGmailConnecting] = useState(false);
-
-  async function connectGoogleAccount() {
-    setError(null);
-    setGmailConnecting(true);
-    try {
-      await onGmailConnected(await connectGmail());
-    } catch (reason) {
-      setError(reason instanceof Error ? reason.message : String(reason || "Unable to connect Gmail."));
-    } finally {
-      setGmailConnecting(false);
-    }
-  }
-
-  function updateField(field: keyof CreateAccountInput, value: string) {
-    setInput((current) => ({ ...current, [field]: value }));
-    setConnectionVerified(false);
-    setConnectionMessage(null);
-  }
-
-  async function testConnection() {
-    setError(null);
-    setConnectionMessage(null);
-    setDiagnosticLog(null);
-    setConnectionVerified(false);
-    setTesting(true);
-
-    try {
-      const status = await testMailConnection({
-        imapHost: input.imapHost,
-        imapPort: 993,
-        smtpHost: input.smtpHost,
-        smtpPort: 587,
-        username: input.email,
-        password: connectionPassword,
-      });
-      setConnectionVerified(true);
-      setConnectionMessage(`Connection verified. Mailboxes found: ${status.mailboxes.length}.`);
-    } catch (reason) {
-      setError(connectionErrorMessage(reason));
-      void diagnosticLogPath().then(setDiagnosticLog).catch(() => undefined);
-    } finally {
-      setTesting(false);
-    }
-  }
-
-  async function submit(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    setError(null);
-
-    if (!isConnectionVerified) {
-      setError("Verify the connection first.");
-      return;
-    }
-
-    if (vaultPassword.length < 12) {
-      setError("The vault password must be at least 12 characters long.");
-      return;
-    }
-
-    if (!isAdditional && vaultPassword !== vaultPasswordConfirmation) {
-      setError("The vault passwords do not match.");
-      return;
-    }
-
-    setSubmitting(true);
-
-    try {
-      const account = await createAccount(input);
-
-      try {
-        await saveCredentials(account.id, connectionPassword, vaultPassword);
-        await saveStoredVaultPassword(vaultPassword).catch(() => undefined);
-      } catch {
-        await deleteCredentials(account.id, vaultPassword).catch(() => undefined);
-        await deleteAccount(account.id).catch(() => undefined);
-        throw new Error("Unable to save credentials. The account was not added.");
-      }
-
-      await onAccountCreated(account, connectionPassword, vaultPassword);
-    } catch (reason) {
-      setError(reason instanceof Error ? reason.message : "Unable to save the account.");
-    } finally {
-      setSubmitting(false);
-    }
-  }
-
-  return (
-    <main className="grid min-h-svh place-items-center bg-background px-6 py-6">
-      <section className="w-full max-w-md rounded-2xl border bg-card p-7 shadow-sm" aria-labelledby="setup-title">
-        <span className="grid size-10 place-items-center rounded-xl bg-primary text-lg font-bold text-primary-foreground">R</span>
-        <p className="mt-7 text-sm font-medium text-primary">{isAdditional ? "New account" : "First account"}</p>
-        <h1 id="setup-title" className="mt-1 text-2xl font-semibold tracking-tight">Connect your email</h1>
-        <p className="mt-3 text-sm leading-6 text-muted-foreground">
-          Verify IMAP and SMTP access, then protect your credentials with a vault password.
-        </p>
-
-        <Button className="mt-6 w-full" disabled={isGmailConnecting} onClick={() => void connectGoogleAccount()} type="button" variant="secondary">
-          {isGmailConnecting ? "Waiting for Google…" : "Connect Gmail"}
-        </Button>
-        <div className="my-5 flex items-center gap-3 text-xs text-muted-foreground"><span className="h-px flex-1 bg-border" /><span>or configure IMAP manually</span><span className="h-px flex-1 bg-border" /></div>
-
-        <form className="space-y-4" onSubmit={submit}>
-          <label className="setup-field">
-            <span>Account name</span>
-            <input onChange={(event) => updateField("displayName", event.target.value)} placeholder="Work email" required value={input.displayName} />
-          </label>
-          <label className="setup-field">
-            <span>Email address</span>
-            <input onChange={(event) => updateField("email", event.target.value)} placeholder="name@company.com" required type="email" value={input.email} />
-          </label>
-          <div className="grid gap-4 sm:grid-cols-2">
-            <label className="setup-field">
-              <span>IMAP server</span>
-              <input onChange={(event) => updateField("imapHost", event.target.value)} placeholder="imap.company.com" required value={input.imapHost} />
-            </label>
-            <label className="setup-field">
-              <span>SMTP server</span>
-              <input onChange={(event) => updateField("smtpHost", event.target.value)} placeholder="smtp.company.com" required value={input.smtpHost} />
-            </label>
-          </div>
-          <label className="setup-field">
-            <span>Email password</span>
-            <input
-              onChange={(event) => {
-                setConnectionPassword(event.target.value);
-                setConnectionVerified(false);
-                setConnectionMessage(null);
-              }}
-              required
-              type="password"
-              value={connectionPassword}
-            />
-            <small>IMAP: SSL/TLS, port 993 · SMTP: STARTTLS, port 587</small>
-          </label>
-          <Button className="w-full" disabled={isTesting} onClick={() => void testConnection()} type="button" variant="secondary">
-            {isTesting ? "Verifying connection…" : "Verify connection"}
-          </Button>
-          {connectionMessage ? <p className="text-sm text-emerald-700 dark:text-emerald-400" role="status">{connectionMessage}</p> : null}
-          <label className="setup-field">
-            <span>{isAdditional ? "Current vault password" : "Vault password"}</span>
-            <input
-              onChange={(event) => setVaultPassword(event.target.value)}
-              required
-              type="password"
-              value={vaultPassword}
-            />
-            <small>{isAdditional ? "Use the password that already protects your connected accounts." : "Use at least 12 characters. It will be stored in the operating system credential store."}</small>
-          </label>
-          {isAdditional ? null : <label className="setup-field">
-            <span>Confirm vault password</span>
-            <input
-              onChange={(event) => setVaultPasswordConfirmation(event.target.value)}
-              required
-              type="password"
-              value={vaultPasswordConfirmation}
-            />
-          </label>}
-          {error ? <p className="text-sm text-destructive" role="alert">{error}</p> : null}
-          {diagnosticLog ? <p className="text-xs leading-5 text-muted-foreground">Diagnostic log: <code className="break-all">{diagnosticLog}</code></p> : null}
-          <Button className="mt-2 w-full" disabled={isSubmitting} type="submit">
-            {isSubmitting ? "Saving…" : "Continue"}
-          </Button>
-          {onCancel ? <Button className="w-full" onClick={onCancel} type="button" variant="ghost">Cancel</Button> : null}
-        </form>
-      </section>
-    </main>
-  );
-}
-
 function App() {
   const [, startTransition] = useTransition();
   const [accounts, setAccounts] = useState<Account[] | null>(null);
@@ -328,11 +122,8 @@ function App() {
   const [composeMessage, setComposeMessage] = useState<string | null>(null);
   const [isSavingDraft, setSavingDraft] = useState(false);
   const [isSending, setSending] = useState(false);
-  const [syncMessage, setSyncMessage] = useState("Unlock the vault to synchronize email");
+  const [syncMessage, setSyncMessage] = useState("Synchronization pending");
   const [syncRevision, setSyncRevision] = useState(0);
-  const [vaultPassword, setVaultPassword] = useState("");
-  const [unlockPassword, setUnlockPassword] = useState("");
-  const [unlockError, setUnlockError] = useState<string | null>(null);
   const [messageBody, setMessageBody] = useState<MessageBody | null>(null);
   const [bodyError, setBodyError] = useState<string | null>(null);
   const [isBodyLoading, setBodyLoading] = useState(false);
@@ -371,12 +162,9 @@ function App() {
     if (account.authType === "gmail_oauth") {
       return "";
     }
-    if (!vaultPassword) {
-      throw new Error("Unlock the vault to continue.");
-    }
-    const password = await readCredential(account.id, name, vaultPassword);
+    const password = await readCredential(account.id, name);
     if (!password) {
-      throw new Error("Credentials were not found in the vault.");
+      throw new Error("Credentials were not found.");
     }
     return password;
   }
@@ -422,17 +210,7 @@ function App() {
       unlisten = listener;
     });
     return () => unlisten?.();
-  }, [vaultPassword, accounts]);
-
-  useEffect(() => {
-    void loadStoredVaultPassword()
-      .then((password) => {
-        if (password) {
-          setVaultPassword(password);
-        }
-      })
-      .catch(() => undefined);
-  }, []);
+  }, [accounts]);
 
   useEffect(() => {
     if (activeAccountId === null) {
@@ -499,7 +277,7 @@ function App() {
   useEffect(() => {
     const message = selectedMessage;
     const account = message ? accounts?.find((item) => item.id === message.accountId) : null;
-    if (!account || !message || (account.authType !== "gmail_oauth" && !vaultPassword)) {
+    if (!account || !message) {
       setMessageBody(null);
       setBodyError(null);
       setBodyLoading(false);
@@ -533,17 +311,16 @@ function App() {
     return () => {
       ignore = true;
     };
-  }, [accounts, selectedMessageKey, vaultPassword]);
+  }, [accounts, selectedMessageKey]);
 
   useEffect(() => {
     if (
       !backgroundSettings.enabled
       || !accounts?.length
-      || (!vaultPassword && accounts.every((account) => account.authType === "password"))
     ) return;
     const timer = window.setInterval(() => void syncAllAccounts(true), backgroundSettings.intervalMinutes * 60_000);
     return () => window.clearInterval(timer);
-  }, [accounts, backgroundSettings, vaultPassword]);
+  }, [accounts, backgroundSettings]);
 
   if (loadError) {
     return <main className="grid min-h-svh place-items-center p-6 text-sm text-destructive">{loadError}</main>;
@@ -571,8 +348,7 @@ function App() {
             setSyncMessage(reason instanceof Error ? reason.message : String(reason || "Gmail was connected, but the initial synchronization failed"));
           }
         }}
-        onAccountCreated={async (account, password, newVaultPassword) => {
-          setVaultPassword(newVaultPassword);
+        onAccountCreated={async (account, password) => {
           setAccounts((current) => [...(current ?? []), account]);
           setActiveAccountId(account.id);
           setActiveFolder("INBOX");
@@ -592,31 +368,10 @@ function App() {
 
   const accountList = accounts;
 
-  async function unlockVault(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    const account = accounts?.find((item) => item.authType === "password");
-    if (!account) {
-      return;
-    }
-    setUnlockError(null);
-
-    try {
-      const password = await readCredential(account.id, "imapPassword", unlockPassword);
-      if (!password) {
-        throw new Error("Credentials were not found in the vault.");
-      }
-      setVaultPassword(unlockPassword);
-      void saveStoredVaultPassword(unlockPassword).catch(() => undefined);
-      setUnlockPassword("");
-    } catch {
-      setUnlockError("Unable to unlock the vault. Check the password.");
-    }
-  }
-
   async function downloadAttachment(position: number, name: string) {
     const message = selectedMessage;
     const account = message ? accountList.find((item) => item.id === message.accountId) : null;
-    if (!account || !message || (account.authType !== "gmail_oauth" && !vaultPassword)) {
+    if (!account || !message) {
       return;
     }
 
@@ -673,7 +428,7 @@ function App() {
   async function handleSendMessage(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const account = accountList.find((item) => item.id === composeAccountId);
-    if (!account || (account.authType !== "gmail_oauth" && !vaultPassword)) {
+    if (!account) {
       setComposeMessage("Unlock the vault to send the message.");
       return;
     }
@@ -723,10 +478,11 @@ function App() {
         if (granted) sendNotification({ title: "RMail", body: `New messages: ${newMessageCount}.` });
       }
       hasCompletedBackgroundSync.current = true;
+      const errors = results.map((result, i) => result.status === "rejected" ? `${accountList[i].displayName}: ${result.reason instanceof Error ? result.reason.message : String(result.reason || "Unknown error")}` : null).filter(Boolean);
       startTransition(() => setSyncMessage(
-        successful.length === accountList.length
-          ? `Synchronized accounts: ${successful.length}, messages: ${messageCount}`
-          : `Synchronized accounts: ${successful.length} of ${accountList.length}`,
+        errors.length === 0
+          ? `Synchronized all ${successful.length} accounts, messages: ${messageCount}`
+          : `Sync failed for ${errors.join("; ")}`
       ));
     } catch {
       if (!isBackground) setSyncMessage("Unable to update the local email cache");
@@ -745,7 +501,6 @@ function App() {
         onAddAccount={() => setAddingAccount(true)}
         onBack={() => setActiveView("mail")}
         onBackgroundSettingsChange={setBackgroundSettings}
-        vaultPassword={vaultPassword}
       />
     );
   }
@@ -777,18 +532,6 @@ function App() {
               <Button className="mt-2 w-full" disabled={isSyncing} onClick={() => void syncAllAccounts()} size="sm" variant="secondary">
                 {isSyncing ? "Synchronizing…" : "Synchronize all"}
               </Button>
-
-              {!vaultPassword && accountList.some((account) => account.authType === "password") ? (
-                <form className="mt-3 space-y-2 rounded-lg border bg-background/70 p-3" onSubmit={unlockVault}>
-                  <p className="text-xs leading-5 text-muted-foreground">Unlock the vault once to save its key in the operating system credential store.</p>
-                  <label className="setup-field">
-                    <span className="sr-only">Vault password</span>
-                    <input onChange={(event) => setUnlockPassword(event.target.value)} placeholder="Vault password" required type="password" value={unlockPassword} />
-                  </label>
-                  {unlockError ? <p className="text-xs text-destructive" role="alert">{unlockError}</p> : null}
-                  <Button className="w-full" size="sm" type="submit">Unlock vault</Button>
-                </form>
-              ) : null}
 
               <nav aria-label="Mail folders" className="mt-6 space-y-1">
                 <button
@@ -839,8 +582,8 @@ function App() {
 
               <div className="mt-auto min-h-20 rounded-lg border bg-background/70 p-3 text-xs text-muted-foreground">
                 <div className="mb-2 flex items-center gap-2 font-medium text-foreground">
-                  <span className="size-2 rounded-full bg-emerald-500" />
-                  {syncMessage.startsWith("Synchronized") ? "Synchronization complete" : "Synchronization pending"}
+                  <span className={`size-2 rounded-full ${syncMessage.startsWith("Sync failed") ? "bg-red-500" : "bg-emerald-500"}`} />
+                  {syncMessage.startsWith("Synchronized") ? "Synchronization complete" : syncMessage.startsWith("Sync failed") ? "Synchronization failed" : "Synchronization pending"}
                 </div>
                 {syncMessage}
               </div>
@@ -940,18 +683,7 @@ function App() {
                         <time className="ml-auto shrink-0 text-xs text-muted-foreground">{selectedMessage.date}</time>
                       </div>
 
-                      {!vaultPassword && accountList.find((account) => account.id === selectedMessage.accountId)?.authType === "password" ? (
-                        <form className="mt-8 max-w-sm space-y-3" onSubmit={unlockVault}>
-                          <p className="text-sm leading-6 text-muted-foreground">Unlock the vault to load the message body.</p>
-                          <label className="setup-field">
-                            <span>Vault password</span>
-                            <input onChange={(event) => setUnlockPassword(event.target.value)} required type="password" value={unlockPassword} />
-                          </label>
-                          {unlockError ? <p className="text-sm text-destructive" role="alert">{unlockError}</p> : null}
-                          <Button type="submit">Unlock vault</Button>
-                        </form>
-                      ) : (
-                        <>
+                      <>
                           {messageBody?.html ? (
                             <div className="mt-8 flex gap-2">
                               <Button onClick={() => setContentMode("text")} size="sm" type="button" variant={contentMode === "text" ? "secondary" : "ghost"}>Text</Button>
@@ -993,9 +725,8 @@ function App() {
                             </div>
                           ) : null}
                         </>
-                      )}
+                      </div>
                     </div>
-                  </div>
                   </div>
                 ) : (
                   <div className="grid h-full place-items-center p-8 text-center text-sm text-muted-foreground">

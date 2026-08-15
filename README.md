@@ -19,7 +19,7 @@ The codebase is currently undergoing a refactoring process to adhere strictly to
 
 ## Security
 
-Passwords are stored in Tauri Stronghold. The Stronghold key and Gmail refresh tokens are stored in the operating system credential store. Passwords, tokens, email addresses, and message contents are excluded from diagnostic logs.
+Passwords and Gmail refresh tokens are stored in the operating system credential store using native keychains. Passwords, tokens, email addresses, and message contents are excluded from diagnostic logs.
 
 OAuth uses a random loopback callback on `127.0.0.1`, validates `state`, and uses PKCE. Google Desktop client credentials are supplied at build time through the ignored `.env` file. Changing an account identity clears its cached server data to prevent messages from different mailboxes from being mixed.
 
@@ -51,7 +51,7 @@ cargo test --manifest-path src-tauri/Cargo.toml
 cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings
 ```
 
-When developing in WSL, install `node_modules` inside WSL. Do not reuse dependencies installed by Windows. The checked-in Cargo configuration sets `SODIUM_DISABLE_PIE=1` for Stronghold's `libsodium` build.
+When developing in WSL, install `node_modules` inside WSL. Do not reuse dependencies installed by Windows.
 
 ## Current limitations
 

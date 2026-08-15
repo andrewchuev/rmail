@@ -12,7 +12,6 @@ import {
 import {
   deleteCredentials,
   saveCredentials,
-  saveStoredVaultPassword,
 } from "@/lib/credentials";
 import { connectionErrorMessage } from "@/lib/errors";
 
@@ -23,7 +22,7 @@ export function AccountSetup({
   onGmailConnected,
 }: {
   isAdditional?: boolean;
-  onAccountCreated: (account: Account, password: string, vaultPassword: string) => Promise<void>;
+  onAccountCreated: (account: Account, password: string) => Promise<void>;
   onCancel?: () => void;
   onGmailConnected: (account: Account) => Promise<void>;
 }) {
@@ -35,8 +34,6 @@ export function AccountSetup({
   });
   const [error, setError] = useState<string | null>(null);
   const [connectionPassword, setConnectionPassword] = useState("");
-  const [vaultPassword, setVaultPassword] = useState("");
-  const [vaultPasswordConfirmation, setVaultPasswordConfirmation] = useState("");
   const [connectionMessage, setConnectionMessage] = useState<string | null>(null);
   const [diagnosticLog, setDiagnosticLog] = useState<string | null>(null);
   const [isTesting, setTesting] = useState(false);
@@ -97,31 +94,20 @@ export function AccountSetup({
       return;
     }
 
-    if (vaultPassword.length < 12) {
-      setError("The vault password must be at least 12 characters long.");
-      return;
-    }
-
-    if (!isAdditional && vaultPassword !== vaultPasswordConfirmation) {
-      setError("The vault passwords do not match.");
-      return;
-    }
-
     setSubmitting(true);
 
     try {
       const account = await createAccount(input);
 
       try {
-        await saveCredentials(account.id, connectionPassword, vaultPassword);
-        await saveStoredVaultPassword(vaultPassword).catch(() => undefined);
+        await saveCredentials(account.id, connectionPassword);
       } catch {
-        await deleteCredentials(account.id, vaultPassword).catch(() => undefined);
+        await deleteCredentials(account.id).catch(() => undefined);
         await deleteAccount(account.id).catch(() => undefined);
         throw new Error("Unable to save credentials. The account was not added.");
       }
 
-      await onAccountCreated(account, connectionPassword, vaultPassword);
+      await onAccountCreated(account, connectionPassword);
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "Unable to save the account.");
     } finally {
@@ -136,7 +122,7 @@ export function AccountSetup({
         <p className="mt-7 text-sm font-medium text-primary">{isAdditional ? "New account" : "First account"}</p>
         <h1 id="setup-title" className="mt-1 text-2xl font-semibold tracking-tight">Connect your email</h1>
         <p className="mt-3 text-sm leading-6 text-muted-foreground">
-          Verify IMAP and SMTP access, then protect your credentials with a vault password.
+          Verify IMAP and SMTP access.
         </p>
 
         <Button className="mt-6 w-full" disabled={isGmailConnecting} onClick={() => void connectGoogleAccount()} type="button" variant="secondary">
@@ -181,25 +167,6 @@ export function AccountSetup({
             {isTesting ? "Verifying connection…" : "Verify connection"}
           </Button>
           {connectionMessage ? <p className="text-sm text-emerald-700 dark:text-emerald-400" role="status">{connectionMessage}</p> : null}
-          <label className="setup-field">
-            <span>{isAdditional ? "Current vault password" : "Vault password"}</span>
-            <input
-              onChange={(event) => setVaultPassword(event.target.value)}
-              required
-              type="password"
-              value={vaultPassword}
-            />
-            <small>{isAdditional ? "Use the password that already protects your connected accounts." : "Use at least 12 characters. It will be stored in the operating system credential store."}</small>
-          </label>
-          {isAdditional ? null : <label className="setup-field">
-            <span>Confirm vault password</span>
-            <input
-              onChange={(event) => setVaultPasswordConfirmation(event.target.value)}
-              required
-              type="password"
-              value={vaultPasswordConfirmation}
-            />
-          </label>}
           {error ? <p className="text-sm text-destructive" role="alert">{error}</p> : null}
           {diagnosticLog ? <p className="text-xs leading-5 text-muted-foreground">Diagnostic log: <code className="break-all">{diagnosticLog}</code></p> : null}
           <Button className="mt-2 w-full" disabled={isSubmitting} type="submit">

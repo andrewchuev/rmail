@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState, type FormEvent } from "react";
-import { AppWindow, ArrowLeft, Bell, Clock3, KeyRound, Mail, Plus, Search } from "lucide-react";
+import { AppWindow, ArrowLeft, Bell, Clock3, Mail, Plus, Search } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
   reconnectGmail,
@@ -15,7 +15,6 @@ import { connectionErrorMessage } from "@/lib/errors";
 type SettingsPageProps = {
   accounts: Account[];
   backgroundSettings: BackgroundSettings;
-  vaultPassword: string;
   onAccountUpdated: (account: Account) => void;
   onAddAccount: () => void;
   onBack: () => void;
@@ -75,11 +74,9 @@ function reasonMessage(reason: unknown, fallback: string) {
 
 function AccountCredentialsEditor({
   account,
-  vaultPassword,
   onUpdated,
 }: {
   account: Account;
-  vaultPassword: string;
   onUpdated: (account: Account) => void;
 }) {
   const [input, setInput] = useState<UpdateAccountInput>(() => ({
@@ -116,16 +113,12 @@ function AccountCredentialsEditor({
     event.preventDefault();
     setError(null);
     setMessage(null);
-    if (!vaultPassword) {
-      setError("Unlock the vault before changing credentials.");
-      return;
-    }
 
     setSaving(true);
     let connectionWasAttempted = false;
     let connectionWasVerified = false;
     try {
-      const previousPassword = await readCredential(account.id, "imapPassword", vaultPassword);
+      const previousPassword = await readCredential(account.id, "imapPassword");
       if (!previousPassword) {
         throw new Error("The current account password was not found in the vault.");
       }
@@ -142,7 +135,7 @@ function AccountCredentialsEditor({
       connectionWasVerified = true;
 
       if (password) {
-        await saveCredentials(account.id, password, vaultPassword);
+        await saveCredentials(account.id, password);
       }
       try {
         const updated = await updateAccount(input);
@@ -151,7 +144,7 @@ function AccountCredentialsEditor({
         setMessage("Account settings were verified and saved.");
       } catch (reason) {
         if (password) {
-          await saveCredentials(account.id, previousPassword, vaultPassword).catch(() => undefined);
+          await saveCredentials(account.id, previousPassword).catch(() => undefined);
         }
         throw reason;
       }
@@ -246,7 +239,6 @@ function AccountCredentialsEditor({
 export function SettingsPage({
   accounts,
   backgroundSettings,
-  vaultPassword,
   onAccountUpdated,
   onAddAccount,
   onBack,
@@ -361,9 +353,8 @@ export function SettingsPage({
           <section className="mt-10 pb-12" aria-labelledby="account-settings-title">
             <div className="mb-4 flex items-end justify-between gap-4">
               <div><h2 className="text-lg font-semibold" id="account-settings-title">Accounts</h2><p className="mt-1 text-sm text-muted-foreground">Connection settings and credentials for each email account.</p></div>
-              {!vaultPassword && visibleAccounts.some((account) => account.authType === "password") ? <p className="flex items-center gap-2 text-xs text-amber-700 dark:text-amber-300"><KeyRound className="size-4" />Unlock the vault from the email screen first.</p> : null}
             </div>
-            <div className="grid gap-4">{visibleAccounts.map((account) => <AccountCredentialsEditor account={account} key={account.id} onUpdated={onAccountUpdated} vaultPassword={vaultPassword} />)}</div>
+            <div className="grid gap-4">{visibleAccounts.map((account) => <AccountCredentialsEditor account={account} key={account.id} onUpdated={onAccountUpdated} />)}</div>
           </section>
         ) : null}
       </div>

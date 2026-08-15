@@ -28,12 +28,7 @@ struct WindowSettings {
     hide_on_close: AtomicBool,
 }
 
-const VAULT_PASSWORD_SERVICE: &str = "com.rmail.desktop";
-const VAULT_PASSWORD_ACCOUNT: &str = "stronghold-master-password";
-
-fn vault_password_entry() -> Result<Entry, String> {
-    Entry::new(VAULT_PASSWORD_SERVICE, VAULT_PASSWORD_ACCOUNT).map_err(|error| error.to_string())
-}
+const CREDENTIAL_SERVICE: &str = "com.rmail.desktop";
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -123,19 +118,40 @@ fn list_accounts(state: tauri::State<'_, AppState>) -> Result<Vec<Account>, Stri
 }
 
 #[tauri::command]
-fn load_stored_vault_password() -> Result<Option<String>, String> {
-    Ok(vault_password_entry()?.get_password().ok())
+fn save_credentials(account_id: i64, password: String) -> Result<(), String> {
+    let imap_entry = Entry::new(CREDENTIAL_SERVICE, &format!("account:{}:imapPassword", account_id))
+        .map_err(|error| error.to_string())?;
+    imap_entry.set_password(&password).map_err(|error| error.to_string())?;
+
+    let smtp_entry = Entry::new(CREDENTIAL_SERVICE, &format!("account:{}:smtpPassword", account_id))
+        .map_err(|error| error.to_string())?;
+    smtp_entry.set_password(&password).map_err(|error| error.to_string())?;
+
+    Ok(())
 }
 
 #[tauri::command]
-fn save_stored_vault_password(password: String) -> Result<(), String> {
-    if password.is_empty() {
-        return Err("The vault password cannot be empty.".to_string());
+fn read_credential(account_id: i64, name: String) -> Result<Option<String>, String> {
+    let entry = Entry::new(CREDENTIAL_SERVICE, &format!("account:{}:{}", account_id, name))
+        .map_err(|error| error.to_string())?;
+    match entry.get_password() {
+        Ok(password) => Ok(Some(password)),
+        Err(keyring::Error::NoEntry) => Ok(None),
+        Err(error) => Err(error.to_string()),
     }
+}
 
-    vault_password_entry()?
-        .set_password(&password)
-        .map_err(|error| error.to_string())
+#[tauri::command]
+fn delete_credentials(account_id: i64) -> Result<(), String> {
+    let imap_entry = Entry::new(CREDENTIAL_SERVICE, &format!("account:{}:imapPassword", account_id))
+        .map_err(|error| error.to_string())?;
+    let _ = imap_entry.delete_credential();
+
+    let smtp_entry = Entry::new(CREDENTIAL_SERVICE, &format!("account:{}:smtpPassword", account_id))
+        .map_err(|error| error.to_string())?;
+    let _ = smtp_entry.delete_credential();
+
+    Ok(())
 }
 
 #[tauri::command]
@@ -200,6 +216,8 @@ fn delete_account(account_id: i64, state: tauri::State<'_, AppState>) -> Result<
     let account = state.database.get_account(account_id)?;
     if account.auth_type == "gmail_oauth" {
         google_oauth::delete_refresh_token(&account.email)?;
+    } else {
+        let _ = delete_credentials(account_id);
     }
     state.database.delete_account(account_id)
 }
@@ -330,11 +348,7 @@ pub fn run() {
         .setup(|app| {
             let app_data_dir = app.path().app_local_data_dir()?;
             let database_path = app_data_dir.join("rmail.sqlite3");
-            let salt_path = app_data_dir.join("stronghold-salt.txt");
             let database = Database::open(&database_path).map_err(std::io::Error::other)?;
-
-            app.handle()
-                .plugin(tauri_plugin_stronghold::Builder::with_argon2(&salt_path).build())?;
             let open = MenuItem::with_id(app, "open", "Open RMail", true, None::<&str>)?;
             let sync = MenuItem::with_id(app, "sync", "Synchronize now", true, None::<&str>)?;
             let separator = PredefinedMenuItem::separator(app)?;
@@ -386,8 +400,9 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             diagnostic_log_path,
             list_accounts,
-            load_stored_vault_password,
-            save_stored_vault_password,
+            save_credentials,
+            read_credential,
+            delete_credentials,
             set_hide_on_close,
             create_account,
             update_account,
