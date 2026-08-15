@@ -35,6 +35,7 @@ import {
   type MessageBody,
 } from "@/lib/accounts";
 import { readCredential, saveCredentials } from "@/lib/credentials";
+import { connectionErrorMessage } from "@/lib/errors";
 import "./App.css";
 
 function folderLabel(path: string) {
@@ -114,7 +115,7 @@ function AccountSetup({ onAccountCreated }: { onAccountCreated: (account: Accoun
       setConnectionVerified(true);
       setConnectionMessage(`Подключение подтверждено: найдено папок — ${status.mailboxes.length}.`);
     } catch (reason) {
-      setError(reason instanceof Error ? reason.message : "Unable to test the connection.");
+      setError(connectionErrorMessage(reason));
     } finally {
       setTesting(false);
     }

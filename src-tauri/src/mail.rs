@@ -83,9 +83,13 @@ pub struct OutgoingMessageInput {
 }
 
 pub async fn test_connection(input: MailConnectionInput) -> Result<MailConnectionStatus, String> {
-    let input = validate_input(input)?;
-    let mailboxes = test_imap(&input).await?;
-    let smtp_ready = test_smtp(&input).await?;
+    let input = validate_input(input).map_err(|message| format!("input:{message}"))?;
+    let mailboxes = test_imap(&input)
+        .await
+        .map_err(|message| format!("imap:{message}"))?;
+    let smtp_ready = test_smtp(&input)
+        .await
+        .map_err(|_| "smtp:Unable to validate SMTP connection.".to_string())?;
 
     Ok(MailConnectionStatus {
         mailboxes,
