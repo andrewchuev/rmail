@@ -383,9 +383,26 @@ async fn send_message(
     input: SendMessageInput,
     state: tauri::State<'_, AppState>,
 ) -> Result<(), String> {
+    tauri_plugin_log::log::info!("send_message started for account {}", input.account_id);
     let account = state.database.get_account(input.account_id)?;
-    let connection = mail_connection(&account, input.password).await?;
-    send_outgoing_message(connection, &account.display_name, input.message).await
+    let connection = match mail_connection(&account, input.password).await {
+        Ok(c) => c,
+        Err(e) => {
+            tauri_plugin_log::log::error!("send_message connection failed for account {}: {}", input.account_id, e);
+            return Err(e);
+        }
+    };
+    
+    match send_outgoing_message(connection, &account.display_name, input.message).await {
+        Ok(_) => {
+            tauri_plugin_log::log::info!("send_message completed for account {}", input.account_id);
+            Ok(())
+        }
+        Err(e) => {
+            tauri_plugin_log::log::error!("send_message failed for account {}: {}", input.account_id, e);
+            Err(e)
+        }
+    }
 }
 
 #[tauri::command]
@@ -398,15 +415,35 @@ async fn sync_account(
     input: SyncAccountInput,
     state: tauri::State<'_, AppState>,
 ) -> Result<SyncAccountStatus, String> {
+    tauri_plugin_log::log::info!("sync_account started for account {}", input.account_id);
     let account = state.database.get_account(input.account_id)?;
-    let connection = mail_connection(&account, input.password).await?;
-    let snapshot = sync_mailboxes(connection).await?;
+    let connection = match mail_connection(&account, input.password).await {
+        Ok(c) => c,
+        Err(e) => {
+            tauri_plugin_log::log::error!("sync_account connection failed for account {}: {}", input.account_id, e);
+            return Err(e);
+        }
+    };
+    
+    let snapshot = match sync_mailboxes(connection).await {
+        Ok(s) => s,
+        Err(e) => {
+            tauri_plugin_log::log::error!("sync_account sync_mailboxes failed for account {}: {}", input.account_id, e);
+            return Err(e);
+        }
+    };
+
     let status = SyncAccountStatus {
         mailbox_count: snapshot.mailboxes.len(),
         message_count: snapshot.messages.len(),
     };
-    state.database.store_inbox_snapshot(account.id, &snapshot)?;
+    
+    if let Err(e) = state.database.store_inbox_snapshot(account.id, &snapshot) {
+        tauri_plugin_log::log::error!("sync_account store_inbox_snapshot failed for account {}: {}", input.account_id, e);
+        return Err(e);
+    }
 
+    tauri_plugin_log::log::info!("sync_account completed for account {}", input.account_id);
     Ok(status)
 }
 

@@ -83,13 +83,23 @@ pub struct Database {
 impl Database {
     pub fn open(path: &Path) -> Result<Self, String> {
         if let Some(parent) = path.parent() {
-            fs::create_dir_all(parent).map_err(|error| error.to_string())?;
+            fs::create_dir_all(parent).map_err(|error| {
+                tauri_plugin_log::log::error!("Database directory creation failed: {}", error);
+                error.to_string()
+            })?;
         }
 
         let database = Self {
-            connection: Mutex::new(Connection::open(path).map_err(|error| error.to_string())?),
+            connection: Mutex::new(Connection::open(path).map_err(|error| {
+                tauri_plugin_log::log::error!("Database connection failed: {}", error);
+                error.to_string()
+            })?),
         };
-        database.initialize()?;
+        
+        if let Err(e) = database.initialize() {
+            tauri_plugin_log::log::error!("Database initialization failed: {}", e);
+            return Err(e);
+        }
 
         Ok(database)
     }

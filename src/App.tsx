@@ -44,62 +44,19 @@ import {
 } from "@/lib/credentials";
 import { applyWindowSettings, loadBackgroundSettings, saveBackgroundSettings, type BackgroundSettings } from "@/lib/settings";
 import "./App.css";
+import { folderLabel, attachmentFileName, messageKey, cachedMessagesEqual, cachedMailboxesEqual } from "@/lib/utils";
 
-function decodeMutf7(str: string): string {
-  return str.replace(/&([^-]*)-/g, (_match, encoded: string) => {
-    if (encoded === "") return "&";
-    try {
-      const b64 = encoded.replace(/,/g, "/");
-      const bytes = atob(b64);
-      let decoded = "";
-      for (let i = 0; i < bytes.length; i += 2) {
-        decoded += String.fromCharCode((bytes.charCodeAt(i) << 8) | bytes.charCodeAt(i + 1));
-      }
-      return decoded;
-    } catch {
-      return _match; // Fallback to original string if decoding fails
-    }
-  });
-}
 
-function folderLabel(path: string) {
-  if (path.toUpperCase() === "INBOX") return "Inbox";
-  const decoded = decodeMutf7(path);
-  // Optional: Clean up standard folder prefixes like [Gmail]/ if desired, 
-  // but for now we just return the decoded path.
-  return decoded;
-}
 
-function attachmentFileName(name: string) {
-  return name.replace(/[\\/]/g, "_").trim() || "attachment";
-}
 
-function messageKey(message: Pick<CachedMessage, "accountId" | "mailboxPath" | "uid">) {
-  return `${message.accountId}:${message.mailboxPath}:${message.uid}`;
-}
 
-function cachedMessagesEqual(left: CachedMessage[], right: CachedMessage[]) {
-  return left.length === right.length && left.every((message, index) => {
-    const candidate = right[index];
-    if (!candidate) return false;
-    return messageKey(message) === messageKey(candidate)
-      && message.accountDisplayName === candidate.accountDisplayName
-      && message.sender === candidate.sender
-      && message.subject === candidate.subject
-      && message.date === candidate.date
-      && message.internalDate === candidate.internalDate
-      && message.isRead === candidate.isRead;
-  });
-}
 
-function cachedMailboxesEqual(left: CachedMailbox[], right: CachedMailbox[]) {
-  return left.length === right.length && left.every((mailbox, index) => {
-    const candidate = right[index];
-    if (!candidate) return false;
-    return mailbox.path === candidate.path
-      && mailbox.unreadCount === candidate.unreadCount;
-  });
-}
+
+
+
+
+
+
 
 type ComposeState = {
   recipients: string;
@@ -765,7 +722,7 @@ function App() {
 
   return (
     <TooltipProvider delayDuration={350}>
-      <main className="min-h-svh bg-background text-foreground">
+      <main className="h-svh overflow-hidden bg-background text-foreground">
         
           {layoutMode === "compact" ? (
             <div className="flex h-full w-full flex-col">
@@ -924,7 +881,7 @@ function App() {
               <header className="border-b px-5 py-4">
                 <div className="flex items-center justify-between">
                   <div>
-                    <p className="text-xs font-medium text-muted-foreground">{activeAccountId === null ? "Unified inbox" : accountList.find((account) => account.id === activeAccountId)?.displayName}</p>
+                    {activeAccountId !== null && (<p className="text-xs font-medium text-muted-foreground">{accountList.find((account) => account.id === activeAccountId)?.displayName}</p>)}
                     <h1 className="mt-0.5 text-lg font-semibold">{activeAccountId === null ? "All inboxes" : folderLabel(activeFolder)}</h1>
                   </div>
                   <div className="flex gap-1">

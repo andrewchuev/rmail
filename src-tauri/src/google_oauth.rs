@@ -151,7 +151,10 @@ async fn exchange_authorization_code(
         ])
         .send()
         .await
-        .map_err(|error| format!("Unable to exchange the Google authorization code: {error}"))?;
+        .map_err(|error| {
+            tauri_plugin_log::log::error!("Google token exchange failed: {error}");
+            format!("Unable to exchange the Google authorization code: {error}")
+        })?;
     let token = google_json::<TokenResponse>(response, "authorization code").await?;
     let refresh_token = token.refresh_token.ok_or_else(|| {
         "Google did not return a refresh token. Revoke RMail access and try again.".to_string()
@@ -257,7 +260,10 @@ pub async fn access_token(email: &str) -> Result<String, String> {
         ])
         .send()
         .await
-        .map_err(|_| "Unable to refresh Google authorization.".to_string())?
+        .map_err(|error| {
+            tauri_plugin_log::log::error!("Google authorization refresh failed: {error}");
+            "Unable to refresh Google authorization.".to_string()
+        })?
         .error_for_status()
         .map_err(|_| "Google authorization expired. Reconnect the account.".to_string())?
         .json::<TokenResponse>()

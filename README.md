@@ -17,8 +17,7 @@ RMail is a lightweight desktop email client built with Rust, Tauri 2, React, and
 
 ## Architecture & Refactoring
 
-The codebase has undergone a refactoring process to adhere strictly to Rust and TypeScript best practices. The Rust backend logic has standardized English docstrings and is verified against `cargo clippy` to ensure optimal performance and code health. Critical panics (like safely unpacking the window icon) have also been resolved. (Note: Splitting the monolithic React components such as `App.tsx` into functional modules is planned for a future update.)
-
+The codebase has undergone a refactoring process to adhere strictly to Rust and TypeScript best practices. The Rust backend logic has standardized English docstrings and is verified against `cargo clippy` to ensure optimal performance and code health. Critical panics (like safely unpacking the window icon) have also been resolved. On the frontend side, utility functions were extracted from `App.tsx` into `src/lib/utils.ts` to improve maintainability, and all dependencies have been updated to their latest compatible versions.
 ## Security
 
 Passwords and Gmail refresh tokens are stored in the operating system credential store using native keychains. Passwords, tokens, email addresses, and message contents are excluded from diagnostic logs.
