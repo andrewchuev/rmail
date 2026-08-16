@@ -622,6 +622,53 @@ impl Database {
         transaction.commit().map_err(|error| error.to_string())
     }
 
+
+    pub fn mark_message_read(
+        &self,
+        account_id: i64,
+        mailbox_path: &str,
+        uid: u32,
+    ) -> Result<(), String> {
+        self.connection
+            .lock()
+            .unwrap()
+            .execute(
+                "UPDATE messages SET is_read = 1 WHERE account_id = ?1 AND mailbox_path = ?2 AND uid = ?3",
+                rusqlite::params![account_id, mailbox_path, uid],
+            )
+            .map_err(|error| error.to_string())?;
+        Ok(())
+    }
+
+    pub fn mark_messages_read_bulk(
+        &self,
+        account_id: i64,
+        mailbox_path: &str,
+        uids: &[u32],
+    ) -> Result<(), String> {
+        if uids.is_empty() {
+            return Ok(());
+        }
+        let mut connection = self.connection.lock().map_err(|error| error.to_string())?;
+        let transaction = connection.transaction().map_err(|error| error.to_string())?;
+        
+        let placeholders = uids.iter().map(|_| "?").collect::<Vec<_>>().join(",");
+        let query = format!(
+            "UPDATE messages SET is_read = 1 WHERE account_id = ? AND mailbox_path = ? AND uid IN ({})",
+            placeholders
+        );
+        
+        let mut params: Vec<&dyn rusqlite::ToSql> = vec![&account_id, &mailbox_path];
+        for uid in uids {
+            params.push(uid);
+        }
+        
+        transaction.execute(&query, rusqlite::params_from_iter(params)).map_err(|error| error.to_string())?;
+        transaction.commit().map_err(|error| error.to_string())?;
+        Ok(())
+    }
+
+
     fn initialize(&self) -> Result<(), String> {
         let connection = self.connection.lock().map_err(|error| error.to_string())?;
         connection

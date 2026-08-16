@@ -11,11 +11,13 @@ RMail is a lightweight desktop email client built with Rust, Tauri 2, React, and
 - Non-blocking cache refreshes that preserve the selected message and open content.
 - Local SQLite cache for mailboxes, headers, opened message bodies, attachment metadata, and drafts.
 - Plain-text composition, local drafts, SMTP sending, and explicit attachment downloads.
+- Mark individual or all messages as read with background IMAP synchronization and instant local UI updates.
+- Dynamic system tray icon indicating unread message status.
 - Sanitized HTML message rendering in a sandboxed iframe.
 
 ## Architecture & Refactoring
 
-The codebase is currently undergoing a refactoring process to adhere strictly to Rust and TypeScript best practices. The monolithic React components (such as `App.tsx`) are being split into functional modules (e.g., `AccountSetup`), and the Rust backend logic is gaining standardized English docstrings and being verified against `cargo clippy` to ensure optimal performance and code health.
+The codebase has undergone a refactoring process to adhere strictly to Rust and TypeScript best practices. The monolithic React components (such as `App.tsx`) have been logically split into functional modules (e.g., `MessageList`, `MessageViewer`), and the Rust backend logic has standardized English docstrings and is verified against `cargo clippy` to ensure optimal performance and code health. Critical panics (like safely unpacking the window icon) have also been resolved.
 
 ## Security
 
@@ -57,5 +59,5 @@ When developing in WSL, install `node_modules` inside WSL. Do not reuse dependen
 
 - Outgoing attachments, HTML composition, and IMAP Sent-folder copies are not implemented.
 - Drafts cannot yet be listed or reopened from the UI.
-- Read, flag, archive, and delete IMAP actions are not implemented.
+- Flag, archive, and delete IMAP actions are not implemented (Mark as read is now fully supported).
 - Search covers cached sender and subject fields, not full message bodies.

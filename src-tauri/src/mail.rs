@@ -742,3 +742,58 @@ mod tests {
         assert!(ensure_message_source_size(MESSAGE_SOURCE_BYTE_LIMIT + 1).is_err());
     }
 }
+
+pub async fn mark_message_read(
+    input: MailConnectionInput,
+    mailbox_path: &str,
+    uid: u32,
+) -> Result<(), String> {
+    let mut session = connect_session(&input).await?;
+    session
+        .select(mailbox_path)
+        .await
+        .map_err(|e| imap_failure_code(&e.to_string()).to_string())?;
+
+    let mut stream = session
+        .uid_store(format!("{}", uid), "+FLAGS (\\Seen)")
+        .await
+        .map_err(|e| imap_failure_code(&e.to_string()).to_string())?;
+    use futures_util::stream::StreamExt;
+    while let Some(res) = stream.next().await {
+        let _ = res.map_err(|e| imap_failure_code(&e.to_string()).to_string())?;
+    }
+    drop(stream);
+
+    session.logout().await.map_err(|e| imap_failure_code(&e.to_string()).to_string())?;
+    Ok(())
+}
+
+pub async fn mark_messages_read_bulk(
+    input: MailConnectionInput,
+    mailbox_path: &str,
+    uids: &[u32],
+) -> Result<(), String> {
+    if uids.is_empty() {
+        return Ok(());
+    }
+    let mut session = connect_session(&input).await?;
+    session
+        .select(mailbox_path)
+        .await
+        .map_err(|e| imap_failure_code(&e.to_string()).to_string())?;
+
+    let uid_set = uids.iter().map(|u| u.to_string()).collect::<Vec<_>>().join(",");
+    let mut stream = session
+        .uid_store(uid_set, r"+FLAGS (\Seen)")
+        .await
+        .map_err(|e| imap_failure_code(&e.to_string()).to_string())?;
+    use futures_util::stream::StreamExt;
+    while let Some(res) = stream.next().await {
+        let _ = res.map_err(|e| imap_failure_code(&e.to_string()).to_string())?;
+    }
+    drop(stream);
+
+    session.logout().await.map_err(|e| imap_failure_code(&e.to_string()).to_string())?;
+    Ok(())
+}
+

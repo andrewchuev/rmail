@@ -99,6 +99,70 @@ async fn mail_connection(
     })
 }
 
+
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct MarkMessageReadInput {
+    account_id: i64,
+    password: String,
+    mailbox_path: String,
+    uid: u32,
+}
+
+#[tauri::command]
+fn mark_message_read(
+    input: MarkMessageReadInput,
+    state: tauri::State<'_, AppState>,
+) -> Result<(), String> {
+    let account = state.database.get_account(input.account_id)?;
+    state.database.mark_message_read(account.id, &input.mailbox_path, input.uid)?;
+
+    tauri::async_runtime::spawn(async move {
+        if let Ok(connection) = mail_connection(&account, input.password).await {
+            let _ = crate::mail::mark_message_read(connection, &input.mailbox_path, input.uid).await;
+        }
+    });
+
+    Ok(())
+}
+
+
+use std::collections::HashMap;
+
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct MarkMultipleMessagesReadInput {
+    account_id: i64,
+    password: String,
+    mailbox_path: String,
+    uid: u32,
+}
+
+#[tauri::command]
+fn mark_multiple_messages_read(
+    messages: Vec<MarkMultipleMessagesReadInput>,
+    state: tauri::State<'_, AppState>,
+) -> Result<(), String> {
+    // Group by (account_id, password, mailbox_path)
+    let mut groups: HashMap<(i64, String, String), Vec<u32>> = HashMap::new();
+    for msg in messages {
+        groups.entry((msg.account_id, msg.password, msg.mailbox_path)).or_default().push(msg.uid);
+    }
+
+    for ((account_id, password, mailbox_path), uids) in groups {
+        let account = state.database.get_account(account_id)?;
+        state.database.mark_messages_read_bulk(account_id, &mailbox_path, &uids)?;
+
+        tauri::async_runtime::spawn(async move {
+            if let Ok(connection) = mail_connection(&account, password).await {
+                let _ = crate::mail::mark_messages_read_bulk(connection, &mailbox_path, &uids).await;
+            }
+        });
+    }
+
+    Ok(())
+}
+
 #[tauri::command]
 fn diagnostic_log_path(app: tauri::AppHandle) -> Result<String, String> {
     app.path()
@@ -346,6 +410,22 @@ async fn sync_account(
     Ok(status)
 }
 
+
+#[tauri::command]
+fn set_tray_unread_state(app: tauri::AppHandle, has_unread: bool) -> Result<(), String> {
+    println!("set_tray_unread_state called with has_unread: {}", has_unread);
+    if let Some(tray) = app.tray_by_id("main-tray") {
+        let icon = if has_unread {
+            tauri::image::Image::from_bytes(include_bytes!("../icons/icon-unread.png"))
+                .map_err(|e| e.to_string())?
+        } else {
+            app.default_window_icon().cloned().expect("Default window icon must be set")
+        };
+        let _ = tray.set_icon(Some(icon));
+    }
+    Ok(())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -383,13 +463,17 @@ pub fn run() {
             let separator = PredefinedMenuItem::separator(app)?;
             let quit = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
             let menu = Menu::with_items(app, &[&open, &sync, &autostart, &separator, &quit])?;
+            let window_icon = app.default_window_icon().cloned().expect("Default window icon must be set");
             TrayIconBuilder::with_id("main-tray")
-                .icon(app.default_window_icon().unwrap().clone())
+                .icon(window_icon)
                 .menu(&menu)
                 .tooltip("RMail")
                 .on_menu_event(|app, event| match event.id.as_ref() {
                     "open" => {
-                        let _ = app.emit("tray-show", ());
+                        if let Some(window) = app.get_webview_window("main") {
+                            let _ = window.show();
+                            let _ = window.set_focus();
+                        }
                     }
                     "sync" => {
                         let _ = app.emit("tray-sync", ());
@@ -414,7 +498,10 @@ pub fn run() {
                         ..
                     } = event
                     {
-                        let _ = tray.app_handle().emit("tray-show", ());
+                        if let Some(window) = tray.app_handle().get_webview_window("main") {
+                            let _ = window.show();
+                            let _ = window.set_focus();
+                        }
                     }
                 })
                 .build(app)?;
@@ -458,7 +545,10 @@ pub fn run() {
             save_message_attachment,
             send_message,
             test_mail_connection,
-            sync_account
+            sync_account,
+            mark_message_read,
+            mark_multiple_messages_read,
+            set_tray_unread_state
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

@@ -1,10 +1,11 @@
 import { useEffect, useMemo, useRef, useState, useTransition, type FormEvent, type ReactNode } from "react";
-import { Archive, ArrowLeft, ChevronDown, Clock3, Inbox, LayoutTemplate, List, MoreHorizontal, Paperclip, PenLine, Plus, Search, Settings, Trash2 } from "lucide-react";
+import { Archive, ArrowLeft, ChevronDown, Clock3, CheckCheck, Inbox, LayoutTemplate, List, MoreHorizontal, Paperclip, PenLine, Plus, Search, Settings, Trash2 } from "lucide-react";
 import { save } from "@tauri-apps/plugin-dialog";
 import { isPermissionGranted, requestPermission, sendNotification } from "@tauri-apps/plugin-notification";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
+import { invoke } from "@tauri-apps/api/core";
 import { Button } from "@/components/ui/button";
 import { AccountSetup } from "@/components/AccountSetup";
 import { SettingsPage } from "@/components/SettingsPage";
@@ -134,6 +135,8 @@ function App() {
   const [accounts, setAccounts] = useState<Account[] | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [mailboxes, setMailboxes] = useState<CachedMailbox[]>([]);
+
+
   const [cachedMessages, setCachedMessages] = useState<CachedMessage[]>([]);
   const [layoutMode, setLayoutMode] = useState<"default" | "compact">("default");
   const layoutModeRef = useRef(layoutMode);
@@ -150,6 +153,22 @@ function App() {
   const [isSending, setSending] = useState(false);
   const [syncMessage, setSyncMessage] = useState("Synchronization pending");
   const [syncRevision, setSyncRevision] = useState(0);
+  useEffect(() => {
+    listUnifiedInbox().then((inbox) => {
+      // If we just clicked a message, cachedMessages might have local optimistic updates not in DB yet
+      // So let's count optimistic unread statuses as well!
+      let unreadCount = 0;
+      for (const msg of inbox) {
+        const cached = cachedMessages.find(m => m.uid === msg.uid && m.accountId === msg.accountId);
+        if (cached) {
+            if (!cached.isRead) unreadCount++;
+        } else {
+            if (!msg.isRead) unreadCount++;
+        }
+      }
+      invoke('set_tray_unread_state', { hasUnread: unreadCount > 0 }).catch(console.error);
+    }).catch(console.error);
+  }, [syncRevision, cachedMessages]);
   const [messageBody, setMessageBody] = useState<MessageBody | null>(null);
   const [bodyError, setBodyError] = useState<string | null>(null);
   const [isBodyLoading, setBodyLoading] = useState(false);
@@ -570,6 +589,42 @@ function App() {
     );
   }
 
+  
+  const handleMarkAllRead = () => {
+    const unreadMessages = visibleMessages.filter((m) => !m.isRead);
+    if (unreadMessages.length === 0) return;
+
+    // Update local state immediately
+    setCachedMessages((current) =>
+      current.map((m) => {
+        if (unreadMessages.some((um) => messageKey(um) === messageKey(m))) {
+          return { ...m, isRead: true };
+        }
+        return m;
+      })
+    );
+
+    // We must resolve credentials first
+    Promise.all(
+      unreadMessages.map(async (message) => {
+        const account = accounts?.find((a) => a.id === message.accountId);
+        if (!account) return null;
+        const password = await accountCredential(account, "imapPassword");
+        return {
+          accountId: message.accountId,
+          password,
+          mailboxPath: message.mailboxPath,
+          uid: message.uid,
+        };
+      })
+    ).then((resolvedPayload) => {
+      const validPayload = resolvedPayload.filter((p) => p !== null);
+      if (validPayload.length > 0) {
+        invoke("mark_multiple_messages_read", { messages: validPayload }).catch(console.error);
+      }
+    });
+  };
+
   const renderMessageList = () => (
     <ScrollArea className="min-h-0 flex-1">
       <div className="p-2">
@@ -580,6 +635,26 @@ function App() {
                         data-selected={selectedMessageKey === messageKey(message)}
                         key={messageKey(message)}
                         onClick={() => {
+                          if (!message.isRead) {
+                            setCachedMessages((current) =>
+                              current.map((m) => (messageKey(m) === messageKey(message) ? { ...m, isRead: true } : m))
+                            );
+                            const account = accounts?.find((a) => a.id === message.accountId);
+                            if (account) {
+                              accountCredential(account, "imapPassword")
+                                .then((password) => {
+                                  invoke("mark_message_read", {
+                                    input: {
+                                      accountId: message.accountId,
+                                      password,
+                                      mailboxPath: message.mailboxPath,
+                                      uid: message.uid,
+                                    }
+                                  }).catch(console.error);
+                                })
+                                .catch(console.error);
+                            }
+                          }
                           setSelectedMessageKey(messageKey(message));
                           setContentMode("text");
                         }}
@@ -589,19 +664,19 @@ function App() {
                           <span className={`size-2 shrink-0 rounded-full bg-primary opacity-0 data-[unread=true]:opacity-100 ${layoutMode === "compact" ? "" : "mt-1"}`} data-unread={!message.isRead} />
                           {layoutMode === "compact" ? (
                             <div className="min-w-0 flex-1 flex items-center gap-4 text-left">
-                              <p className={`w-64 shrink-0 truncate text-sm ${!message.isRead ? "font-bold text-foreground" : "font-normal text-foreground/80"}`}>{message.sender}</p>
-                              <p className={`flex-1 truncate text-sm ${!message.isRead ? "font-bold text-foreground" : "font-normal text-foreground/80"}`}>
+                              <p className={`w-64 shrink-0 truncate text-sm ${!message.isRead ? "font-semibold text-foreground/90" : "font-normal text-foreground/70"}`}>{message.sender}</p>
+                              <p className={`flex-1 truncate text-sm ${!message.isRead ? "font-semibold text-foreground/90" : "font-normal text-foreground/70"}`}>
                                 {message.subject} <span className="text-muted-foreground font-normal ml-2">&middot; {message.accountDisplayName} &middot; {folderLabel(message.mailboxPath)}</span>
                               </p>
-                              <time className={`shrink-0 text-xs ${!message.isRead ? "font-bold text-foreground" : "text-muted-foreground"}`}>{message.date}</time>
+                              <time className={`shrink-0 text-xs ${!message.isRead ? "font-semibold text-foreground/90" : "text-muted-foreground"}`}>{message.date}</time>
                             </div>
                           ) : (
                             <div className="min-w-0 flex-1 text-left">
                               <div className="flex items-center gap-3">
-                                <p className={`truncate text-sm ${!message.isRead ? "font-bold text-foreground" : "font-medium text-foreground/80"}`}>{message.sender}</p>
-                                <time className={`ml-auto text-xs ${!message.isRead ? "font-bold text-foreground" : "text-muted-foreground"}`}>{message.date}</time>
+                                <p className={`truncate text-sm ${!message.isRead ? "font-semibold text-foreground/90" : "font-medium text-foreground/70"}`}>{message.sender}</p>
+                                <time className={`ml-auto text-xs ${!message.isRead ? "font-semibold text-foreground/90" : "text-muted-foreground"}`}>{message.date}</time>
                               </div>
-                              <p className={`mt-1 truncate text-sm ${!message.isRead ? "font-bold text-foreground" : "font-normal text-foreground/80"}`}>{message.subject}</p>
+                              <p className={`mt-1 truncate text-sm ${!message.isRead ? "font-semibold text-foreground/90" : "font-normal text-foreground/70"}`}>{message.subject}</p>
                               <p className="mt-1 text-xs leading-5 text-muted-foreground">{message.accountDisplayName} &middot; {folderLabel(message.mailboxPath)}</p>
                             </div>
                           )}
@@ -853,6 +928,10 @@ function App() {
                     <h1 className="mt-0.5 text-lg font-semibold">{activeAccountId === null ? "All inboxes" : folderLabel(activeFolder)}</h1>
                   </div>
                   <div className="flex gap-1">
+                    
+                    <IconButton label="Mark all as read" onClick={handleMarkAllRead}>
+                      <CheckCheck />
+                    </IconButton>
                     <IconButton label="Compact mode" onClick={() => { setLayoutMode("compact"); setActiveAccountId(null); setSelectedMessageKey(null); }}>
                       <List />
                     </IconButton>
