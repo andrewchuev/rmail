@@ -419,7 +419,7 @@ fn set_tray_unread_state(app: tauri::AppHandle, has_unread: bool) -> Result<(), 
             tauri::image::Image::from_bytes(include_bytes!("../icons/icon-unread.png"))
                 .map_err(|e| e.to_string())?
         } else {
-            app.default_window_icon().cloned().expect("Default window icon must be set")
+            app.default_window_icon().cloned().ok_or_else(|| "Default window icon must be set".to_string())?
         };
         let _ = tray.set_icon(Some(icon));
     }
@@ -463,11 +463,14 @@ pub fn run() {
             let separator = PredefinedMenuItem::separator(app)?;
             let quit = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
             let menu = Menu::with_items(app, &[&open, &sync, &autostart, &separator, &quit])?;
-            let window_icon = app.default_window_icon().cloned().expect("Default window icon must be set");
-            TrayIconBuilder::with_id("main-tray")
-                .icon(window_icon)
+            let window_icon = app.default_window_icon().cloned();
+            let mut tray_builder = TrayIconBuilder::with_id("main-tray")
                 .menu(&menu)
-                .tooltip("RMail")
+                .tooltip("RMail");
+            if let Some(icon) = window_icon {
+                tray_builder = tray_builder.icon(icon);
+            }
+            tray_builder
                 .on_menu_event(|app, event| match event.id.as_ref() {
                     "open" => {
                         if let Some(window) = app.get_webview_window("main") {
