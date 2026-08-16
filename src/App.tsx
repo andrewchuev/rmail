@@ -722,8 +722,8 @@ function App() {
 
   return (
     <TooltipProvider delayDuration={350}>
-      <main className="h-svh overflow-hidden bg-background text-foreground">
-        
+      <main className="h-svh overflow-hidden flex flex-col bg-background text-foreground">
+        <div className="flex-1 overflow-hidden">
           {layoutMode === "compact" ? (
             <div className="flex h-full w-full flex-col">
               <header className="flex items-center justify-between border-b px-5 py-3 shadow-sm">
@@ -863,14 +863,6 @@ function App() {
                 ))}
               </nav>
 
-
-              <div className="mt-auto min-h-20 rounded-lg border bg-background/70 p-3 text-xs text-muted-foreground">
-                <div className="mb-2 flex items-center gap-2 font-medium text-foreground">
-                  <span className={`size-2 rounded-full ${syncMessage.startsWith("Sync failed") ? "bg-red-500" : "bg-emerald-500"}`} />
-                  {syncMessage.startsWith("Synchronized") ? "Synchronization complete" : syncMessage.startsWith("Sync failed") ? "Synchronization failed" : "Synchronization pending"}
-                </div>
-                {syncMessage !== "Synchronization pending" ? syncMessage : null}
-              </div>
             </aside>
           </ResizablePanel>
 
@@ -931,6 +923,7 @@ function App() {
           </ResizablePanel>
         </ResizablePanelGroup>
           )}
+        </div>
 
         {isComposeOpen ? (
           <form aria-label="New message" className="compose-window" onSubmit={handleSendMessage}>
@@ -957,6 +950,14 @@ function App() {
             </div>
           </form>
         ) : null}
+
+        <footer className="flex h-7 shrink-0 items-center border-t bg-muted/50 px-3 text-xs text-muted-foreground">
+          <div className="flex items-center gap-2 font-medium text-foreground">
+            <span className={`size-2 rounded-full ${syncMessage.startsWith("Sync failed") ? "bg-red-500" : "bg-emerald-500"}`} />
+            {syncMessage.startsWith("Synchronized") ? "Synchronization complete" : syncMessage.startsWith("Sync failed") ? "Synchronization failed" : "Synchronization pending"}
+            {syncMessage !== "Synchronization pending" ? ` - ${syncMessage}` : null}
+          </div>
+        </footer>
       </main>
     </TooltipProvider>
   );
