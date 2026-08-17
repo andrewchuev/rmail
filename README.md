@@ -61,6 +61,18 @@ cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings
 
 When developing in WSL, install `node_modules` inside WSL. Do not reuse dependencies installed by Windows.
 
+### Versioning
+
+The version lives in five places that must agree: `package.json`, `package-lock.json`, `src-tauri/Cargo.toml`, `src-tauri/Cargo.lock`, and `src-tauri/tauri.conf.json`. Major and minor are set by hand by editing all five; the patch number is bumped automatically, one file at a time, by `scripts/bump-version.mjs`.
+
+To cut a release build, use:
+
+```bash
+npm run release
+```
+
+This runs `npm run version:bump` (patch += 1 across all five files) and then `tauri build`, so every produced build carries a version newer than the last. Run `npm run version:bump` on its own to just bump the patch without building. The script refuses to run if the files are already out of sync, so a failed bump means a version was edited by hand somewhere and needs reconciling first.
+
 ## Current limitations
 
 - Outgoing attachments, HTML composition, and IMAP Sent-folder copies are not implemented.
