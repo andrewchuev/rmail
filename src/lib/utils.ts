@@ -51,6 +51,43 @@ export function cachedMessagesEqual(left: CachedMessage[], right: CachedMessage[
   });
 }
 
+/**
+ * Wraps a sanitized HTML message body in a standalone document with baseline
+ * typography. Email HTML rarely declares its own font/colors, so without
+ * this it inherits the browser's serif/black-on-transparent defaults and
+ * reads poorly inside a dark-themed host page - a fixed light background
+ * (like Gmail/Outlook's preview panes) keeps it legible regardless of the
+ * app's theme.
+ */
+export function wrapEmailHtml(bodyHtml: string): string {
+  return `<!doctype html>
+<html>
+<head>
+<meta charset="utf-8" />
+<base target="_blank" />
+<style>
+  :root { color-scheme: light; }
+  html, body {
+    margin: 0;
+    padding: 20px 24px;
+    background: #ffffff;
+    color: #1f2328;
+    font-family: "Geist Variable", ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    font-size: 14px;
+    line-height: 1.6;
+  }
+  body { overflow-wrap: anywhere; }
+  img, video { max-width: 100%; height: auto; }
+  table { max-width: 100%; border-collapse: collapse; }
+  a { color: #2563eb; }
+  pre, code { white-space: pre-wrap; overflow-wrap: anywhere; }
+  blockquote { margin-left: 0; padding-left: 12px; border-left: 3px solid #e5e7eb; color: #4b5563; }
+</style>
+</head>
+<body>${bodyHtml}</body>
+</html>`;
+}
+
 export function cachedMailboxesEqual(left: CachedMailbox[], right: CachedMailbox[]) {
   return left.length === right.length && left.every((mailbox, index) => {
     const candidate = right[index];
