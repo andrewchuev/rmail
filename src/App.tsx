@@ -13,7 +13,6 @@ import {
   ResizablePanel,
   ResizablePanelGroup,
 } from "@/components/ui/resizable";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import {
   Tooltip,
@@ -809,220 +808,187 @@ function App() {
     </ScrollArea>
   );
 
+  const renderListHeader = (toggleModeButton: ReactNode) => (
+    <header className="border-b px-5 py-4">
+      <div className="flex items-center justify-between">
+        <div>
+          {activeAccountId !== null && (<p className="text-xs font-medium text-muted-foreground">{accountList.find((account) => account.id === activeAccountId)?.displayName}</p>)}
+          <h1 className="mt-0.5 text-lg font-semibold">{activeAccountId === null ? "All inboxes" : folderLabel(activeFolder)}</h1>
+        </div>
+        <div className="flex gap-1">
+          <IconButton label="Mark all as read" onClick={handleMarkAllRead}>
+            <CheckCheck />
+          </IconButton>
+          {toggleModeButton}
+        </div>
+      </div>
+      <label className="search-field mt-4">
+        <Search className="size-4" />
+        <span className="sr-only">Search messages</span>
+        <input
+          onChange={(event) => setQuery(event.target.value)}
+          placeholder="Search"
+          type="search"
+          value={query}
+        />
+      </label>
+    </header>
+  );
+
   return (
     <TooltipProvider delayDuration={350}>
       <main className="h-svh overflow-hidden flex flex-col bg-background text-foreground">
         <div className="flex-1 overflow-hidden">
-          {layoutMode === "compact" ? (
-            <div className="flex h-full w-full flex-col">
-              <header className="flex items-center justify-between border-b px-5 py-3 shadow-sm">
-                <div className="flex items-center gap-3">
-                  {selectedMessage ? (
-                    <IconButton label="Back" onClick={() => setSelectedMessageKey(null)}>
-                      <ArrowLeft />
-                    </IconButton>
-                  ) : null}
-                  <Select
-                    value={activeAccountId === null ? "all" : activeAccountId.toString()}
-                    onValueChange={(val) => {
-                      setActiveAccountId(val === "all" ? null : Number(val));
-                      setActiveFolder("INBOX");
-                      setSelectedMessageKey(null);
-                    }}
-                  >
-                    <SelectTrigger className="w-[200px] border-none bg-transparent shadow-none focus:ring-0 text-base font-semibold">
-                      <SelectValue placeholder="All inboxes" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="all">All inboxes</SelectItem>
-                      {accountList.map((acc) => (
-                        <SelectItem key={acc.id} value={acc.id.toString()}>{acc.displayName}</SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-                <div className="flex items-center gap-2">
-                  {!selectedMessage ? (
-                    <div className="relative">
-                      <Search className="absolute left-2.5 top-2.5 size-4 text-muted-foreground" />
-                      <input
-                        className="h-9 rounded-md border border-input bg-transparent px-3 py-1 pl-9 text-sm shadow-sm transition-colors placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
-                        onChange={(event) => setQuery(event.target.value)}
-                        placeholder="Search..."
-                        type="search"
-                        value={query}
-                      />
-                    </div>
-                  ) : null}
-                  <IconButton label="Default mode" onClick={() => setLayoutMode("default")}>
-                    <LayoutTemplate />
-                  </IconButton>
-                </div>
-              </header>
-              <div className="flex-1 overflow-hidden">
-                {selectedMessage ? (
-                  <article className="flex h-full flex-col">
-                    <header className="flex items-center justify-end border-b px-6 py-2">
-                      <div className="flex gap-1">
-                        <IconButton label="Archive"><Archive /></IconButton>
-                        <IconButton label="Delete" onClick={() => handleDeleteMessage(selectedMessage)}><Trash2 /></IconButton>
-                        <IconButton label="Snooze"><Clock3 /></IconButton>
-
-                      </div>
-                    </header>
-                    {renderMessageViewer()}
-                  </article>
-                ) : (
-                  <section className="flex h-full flex-col">
-                    {renderMessageList()}
-                  </section>
-                )}
-              </div>
-            </div>
-          ) : (
-<ResizablePanelGroup className="min-h-svh" orientation="horizontal">
-          <ResizablePanel defaultSize="19%" minSize="16%">
-            <aside className="flex h-full min-w-52 flex-col border-r bg-sidebar px-3 py-4">
-              <div className="flex items-center justify-between px-2">
-                <div className="flex items-center gap-2 p-1 text-sm font-semibold">
-                  <span className="grid size-7 place-items-center rounded-lg bg-primary text-primary-foreground">
-                    R
-                  </span>
-                  RMail
-                </div>
-                <div className="flex gap-1">
-                  <IconButton label="Settings" onClick={() => setActiveView("settings")}>
-                    <Settings />
-                  </IconButton>
-                  <IconButton label="Add account" onClick={() => setAddingAccount(true)}>
-                    <Plus />
-                  </IconButton>
-                </div>
-              </div>
-
-              <Button className="mt-6 w-full justify-start" onClick={openCompose}>
-                <PenLine />
-                Compose
-              </Button>
-
-              <Button className="mt-2 w-full" disabled={isSyncing} onClick={() => void syncAllAccounts()} size="sm" variant="secondary">
-                {isSyncing ? "Synchronizing…" : "Synchronize all"}
-              </Button>
-
-              <nav aria-label="Mail folders" className="mt-6 space-y-1">
-                <button
-                  aria-current={activeAccountId === null ? "page" : undefined}
-                  className="folder-link"
-                  data-active={activeAccountId === null}
-                  onClick={() => setActiveAccountId(null)}
-                  type="button"
-                >
-                  <Inbox className="size-4" />
-                  <span>All inboxes</span>
-                </button>
-                <p className="px-2 pt-4 text-xs font-medium text-muted-foreground">Accounts</p>
-                {accountList.map((account) => {
-                  const isExpanded = activeAccountId === account.id;
-                  return (
-                    <div key={account.id}>
-                      <button
-                        aria-expanded={isExpanded}
-                        className="folder-link"
-                        data-active={isExpanded}
-                        onClick={() => {
-                          if (isExpanded) {
-                            setActiveAccountId(null);
-                          } else {
-                            setActiveAccountId(account.id);
-                            setActiveFolder("INBOX");
-                          }
-                        }}
-                        type="button"
-                      >
-                        <ChevronRight className={`size-3.5 shrink-0 text-muted-foreground transition-transform ${isExpanded ? "rotate-90" : ""}`} />
-                        <span className="truncate">{account.displayName}</span>
-                      </button>
-                      {isExpanded ? (
-                        <div className="ml-4 mt-1 space-y-1 border-l pl-2">
-                          {mailboxes.map((mailbox) => (
-                            <button
-                              aria-current={activeFolder === mailbox.path ? "page" : undefined}
-                              className="folder-link"
-                              data-active={activeFolder === mailbox.path}
-                              key={`${account.id}:${mailbox.path}`}
-                              onClick={() => setActiveFolder(mailbox.path)}
-                              type="button"
-                            >
-                              <Inbox className="size-4" />
-                              <span>{folderLabel(mailbox.path)}</span>
-                              {mailbox.unreadCount ? <span className="ml-auto text-xs tabular-nums">{mailbox.unreadCount}</span> : null}
-                            </button>
-                          ))}
-                        </div>
-                      ) : null}
-                    </div>
-                  );
-                })}
-              </nav>
-
-            </aside>
-          </ResizablePanel>
-
-          <ResizableHandle />
-
-          <ResizablePanel defaultSize="34%" minSize="26%">
-            <section className="flex h-full min-w-72 flex-col border-r">
-              <header className="border-b px-5 py-4">
-                <div className="flex items-center justify-between">
-                  <div>
-                    {activeAccountId !== null && (<p className="text-xs font-medium text-muted-foreground">{accountList.find((account) => account.id === activeAccountId)?.displayName}</p>)}
-                    <h1 className="mt-0.5 text-lg font-semibold">{activeAccountId === null ? "All inboxes" : folderLabel(activeFolder)}</h1>
+          <ResizablePanelGroup className="min-h-svh" orientation="horizontal">
+            <ResizablePanel defaultSize="19%" minSize="16%">
+              <aside className="flex h-full min-w-52 flex-col border-r bg-sidebar px-3 py-4">
+                <div className="flex items-center justify-between px-2">
+                  <div className="flex items-center gap-2 p-1 text-sm font-semibold">
+                    <span className="grid size-7 place-items-center rounded-lg bg-primary text-primary-foreground">
+                      R
+                    </span>
+                    RMail
                   </div>
                   <div className="flex gap-1">
-                    
-                    <IconButton label="Mark all as read" onClick={handleMarkAllRead}>
-                      <CheckCheck />
+                    <IconButton label="Settings" onClick={() => setActiveView("settings")}>
+                      <Settings />
                     </IconButton>
-                    <IconButton label="Compact mode" onClick={() => { setLayoutMode("compact"); setActiveAccountId(null); setSelectedMessageKey(null); }}>
-                      <List />
+                    <IconButton label="Add account" onClick={() => setAddingAccount(true)}>
+                      <Plus />
                     </IconButton>
-
                   </div>
                 </div>
-                <label className="search-field mt-4">
-                  <Search className="size-4" />
-                  <span className="sr-only">Search messages</span>
-                  <input
-                    onChange={(event) => setQuery(event.target.value)}
-                    placeholder="Search"
-                    type="search"
-                    value={query}
-                  />
-                </label>
-              </header>
 
-              {renderMessageList()}
-            </section>
-          </ResizablePanel>
+                <Button className="mt-6 w-full justify-start" onClick={openCompose}>
+                  <PenLine />
+                  Compose
+                </Button>
 
-          <ResizableHandle />
+                <Button className="mt-2 w-full" disabled={isSyncing} onClick={() => void syncAllAccounts()} size="sm" variant="secondary">
+                  {isSyncing ? "Synchronizing…" : "Synchronize all"}
+                </Button>
 
-          <ResizablePanel defaultSize="47%" minSize="32%">
-            <article className="flex h-full min-w-80 flex-col">
-              <header className="flex items-center justify-between border-b px-6 py-4">
-                <div className="flex gap-1">
-                  <IconButton label="Archive"><Archive /></IconButton>
-                  <IconButton label="Delete" onClick={selectedMessage ? () => handleDeleteMessage(selectedMessage) : undefined}><Trash2 /></IconButton>
-                  <IconButton label="Snooze"><Clock3 /></IconButton>
-                </div>
+                <nav aria-label="Mail folders" className="mt-6 space-y-1">
+                  <button
+                    aria-current={activeAccountId === null ? "page" : undefined}
+                    className="folder-link"
+                    data-active={activeAccountId === null}
+                    onClick={() => setActiveAccountId(null)}
+                    type="button"
+                  >
+                    <Inbox className="size-4" />
+                    <span>All inboxes</span>
+                  </button>
+                  <p className="px-2 pt-4 text-xs font-medium text-muted-foreground">Accounts</p>
+                  {accountList.map((account) => {
+                    const isExpanded = activeAccountId === account.id;
+                    return (
+                      <div key={account.id}>
+                        <button
+                          aria-expanded={isExpanded}
+                          className="folder-link"
+                          data-active={isExpanded}
+                          onClick={() => {
+                            if (isExpanded) {
+                              setActiveAccountId(null);
+                            } else {
+                              setActiveAccountId(account.id);
+                              setActiveFolder("INBOX");
+                            }
+                          }}
+                          type="button"
+                        >
+                          <ChevronRight className={`size-3.5 shrink-0 text-muted-foreground transition-transform ${isExpanded ? "rotate-90" : ""}`} />
+                          <span className="truncate">{account.displayName}</span>
+                        </button>
+                        {isExpanded ? (
+                          <div className="ml-4 mt-1 space-y-1 border-l pl-2">
+                            {mailboxes.map((mailbox) => (
+                              <button
+                                aria-current={activeFolder === mailbox.path ? "page" : undefined}
+                                className="folder-link"
+                                data-active={activeFolder === mailbox.path}
+                                key={`${account.id}:${mailbox.path}`}
+                                onClick={() => setActiveFolder(mailbox.path)}
+                                type="button"
+                              >
+                                <Inbox className="size-4" />
+                                <span>{folderLabel(mailbox.path)}</span>
+                                {mailbox.unreadCount ? <span className="ml-auto text-xs tabular-nums">{mailbox.unreadCount}</span> : null}
+                              </button>
+                            ))}
+                          </div>
+                        ) : null}
+                      </div>
+                    );
+                  })}
+                </nav>
 
-              </header>
+              </aside>
+            </ResizablePanel>
 
-              {renderMessageViewer()}
-            </article>
-          </ResizablePanel>
-        </ResizablePanelGroup>
-          )}
+            <ResizableHandle />
+
+            {layoutMode === "compact" ? (
+              <ResizablePanel defaultSize="81%" minSize="40%">
+                <section className="flex h-full min-w-72 flex-col">
+                  {selectedMessage ? (
+                    <article className="flex h-full flex-col">
+                      <header className="flex items-center justify-between border-b px-5 py-3">
+                        <IconButton label="Back" onClick={() => setSelectedMessageKey(null)}>
+                          <ArrowLeft />
+                        </IconButton>
+                        <div className="flex gap-1">
+                          <IconButton label="Archive"><Archive /></IconButton>
+                          <IconButton label="Delete" onClick={() => handleDeleteMessage(selectedMessage)}><Trash2 /></IconButton>
+                          <IconButton label="Snooze"><Clock3 /></IconButton>
+                        </div>
+                      </header>
+                      {renderMessageViewer()}
+                    </article>
+                  ) : (
+                    <>
+                      {renderListHeader(
+                        <IconButton label="Default mode" onClick={() => setLayoutMode("default")}>
+                          <LayoutTemplate />
+                        </IconButton>,
+                      )}
+                      {renderMessageList()}
+                    </>
+                  )}
+                </section>
+              </ResizablePanel>
+            ) : (
+              <>
+                <ResizablePanel defaultSize="34%" minSize="26%">
+                  <section className="flex h-full min-w-72 flex-col border-r">
+                    {renderListHeader(
+                      <IconButton label="Compact mode" onClick={() => setLayoutMode("compact")}>
+                        <List />
+                      </IconButton>,
+                    )}
+                    {renderMessageList()}
+                  </section>
+                </ResizablePanel>
+
+                <ResizableHandle />
+
+                <ResizablePanel defaultSize="47%" minSize="32%">
+                  <article className="flex h-full min-w-80 flex-col">
+                    <header className="flex items-center justify-between border-b px-6 py-4">
+                      <div className="flex gap-1">
+                        <IconButton label="Archive"><Archive /></IconButton>
+                        <IconButton label="Delete" onClick={selectedMessage ? () => handleDeleteMessage(selectedMessage) : undefined}><Trash2 /></IconButton>
+                        <IconButton label="Snooze"><Clock3 /></IconButton>
+                      </div>
+                    </header>
+
+                    {renderMessageViewer()}
+                  </article>
+                </ResizablePanel>
+              </>
+            )}
+          </ResizablePanelGroup>
         </div>
 
         {isComposeOpen ? (
