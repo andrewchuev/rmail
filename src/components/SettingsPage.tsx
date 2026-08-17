@@ -4,6 +4,7 @@ import { Button } from "@/components/ui/button";
 import {
   reconnectGmail,
   renameAccount,
+  setAccountNotifications,
   testMailConnection,
   updateAccount,
   type Account,
@@ -203,6 +204,27 @@ function AccountCredentialsEditor({
     }
   }
 
+  async function toggleNotifications(enabled: boolean) {
+    setError(null);
+    try {
+      onUpdated(await setAccountNotifications(account.id, enabled));
+    } catch (reason) {
+      setError(reasonMessage(reason, "Unable to update notification settings."));
+    }
+  }
+
+  const notificationsToggle = (
+    <label className="mt-3 flex w-fit items-center gap-2 text-sm text-muted-foreground">
+      <input
+        checked={account.notificationsEnabled}
+        onChange={(event) => void toggleNotifications(event.target.checked)}
+        type="checkbox"
+      />
+      <Bell className="size-3.5" />
+      Notify me about new mail in this account
+    </label>
+  );
+
   if (account.authType === "gmail_oauth") {
     return (
       <article className="rounded-xl border bg-card p-5" id={`account-${account.id}`}>
@@ -211,6 +233,7 @@ function AccountCredentialsEditor({
           <div className="min-w-0 flex-1">
             <h3 className="font-semibold">{account.displayName}</h3>
             <p className="truncate text-sm text-muted-foreground">{account.email}</p>
+            {notificationsToggle}
             <form className="mt-4 flex items-end gap-2" onSubmit={renameGoogleAccount}>
               <label className="setup-field flex-1">
                 <span>Account name</span>
@@ -239,6 +262,7 @@ function AccountCredentialsEditor({
         <div className="min-w-0">
           <h3 className="font-semibold">{account.displayName}</h3>
           <p className="truncate text-sm text-muted-foreground">{account.email}</p>
+          {notificationsToggle}
         </div>
       </div>
       <form className="grid gap-4" onSubmit={savePasswordAccount}>
@@ -397,7 +421,7 @@ export function SettingsPage({
               {matchedIds.has("background-notifications") ? (
                 <label className="flex items-center gap-4 p-5" id="background-notifications">
                   <span className="grid size-10 shrink-0 place-items-center rounded-lg bg-primary/10 text-primary"><Bell className="size-5" /></span>
-                  <span className="min-w-0 flex-1"><span className="block text-sm font-medium">System notifications</span><span className="mt-1 block text-sm text-muted-foreground">Show a notification when new messages arrive.</span></span>
+                  <span className="min-w-0 flex-1"><span className="block text-sm font-medium">System notifications</span><span className="mt-1 block text-sm text-muted-foreground">Master switch for notifications. Also enable notifications for individual accounts below.</span></span>
                   <input checked={backgroundSettings.notifications} disabled={!backgroundSettings.enabled} onChange={(event) => onBackgroundSettingsChange({ ...backgroundSettings, notifications: event.target.checked })} type="checkbox" />
                 </label>
               ) : null}

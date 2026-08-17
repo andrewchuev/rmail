@@ -7,10 +7,11 @@ export type Account = {
   imapHost: string;
   smtpHost: string;
   authType: "password" | "gmail_oauth";
+  notificationsEnabled: boolean;
 };
 
-export type CreateAccountInput = Omit<Account, "id" | "authType">;
-export type UpdateAccountInput = Omit<Account, "authType">;
+export type CreateAccountInput = Omit<Account, "id" | "authType" | "notificationsEnabled">;
+export type UpdateAccountInput = Omit<Account, "authType" | "notificationsEnabled">;
 
 export type MailConnectionInput = {
   imapHost: string;
@@ -211,6 +212,10 @@ export async function deleteMessages(messages: MessageRef[]): Promise<void> {
 
 export async function renameAccount(accountId: number, displayName: string): Promise<Account> {
   return invoke<Account>("rename_account", { accountId, displayName });
+}
+
+export async function setAccountNotifications(accountId: number, enabled: boolean): Promise<Account> {
+  return invoke<Account>("set_account_notifications", { accountId, enabled });
 }
 
 export async function setTrayUnreadState(hasUnread: boolean): Promise<void> {

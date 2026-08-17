@@ -113,11 +113,13 @@ function App() {
   const [syncMessage, setSyncMessage] = useState("Synchronization pending");
   const [syncRevision, setSyncRevision] = useState(0);
   useEffect(() => {
+    const notifiableAccountIds = new Set((accounts ?? []).filter((a) => a.notificationsEnabled).map((a) => a.id));
     listUnifiedInbox().then((inbox) => {
       // If we just clicked a message, cachedMessages might have local optimistic updates not in DB yet
       // So let's count optimistic unread statuses as well!
       let unreadCount = 0;
       for (const msg of inbox) {
+        if (!notifiableAccountIds.has(msg.accountId)) continue;
         const cached = cachedMessages.find(m => m.uid === msg.uid && m.accountId === msg.accountId);
         if (cached) {
             if (!cached.isRead) unreadCount++;
@@ -127,7 +129,7 @@ function App() {
       }
       setTrayUnreadState(unreadCount > 0).catch(console.error);
     }).catch(console.error);
-  }, [syncRevision, cachedMessages]);
+  }, [syncRevision, cachedMessages, accounts]);
   const [messageBody, setMessageBody] = useState<MessageBody | null>(null);
   const [bodyError, setBodyError] = useState<string | null>(null);
   const [isBodyLoading, setBodyLoading] = useState(false);
@@ -576,11 +578,14 @@ function App() {
       startTransition(() => setSyncRevision((current) => current + 1));
       const inbox = await listUnifiedInbox();
       const currentKeys = new Set(inbox.map(messageKey));
-      const newMessageCount = [...currentKeys].filter((key) => !knownMessageKeys.current.has(key)).length;
+      const notifiableAccountIds = new Set(accountList.filter((a) => a.notificationsEnabled).map((a) => a.id));
+      const newNotifiableCount = inbox.filter(
+        (message) => !knownMessageKeys.current.has(messageKey(message)) && notifiableAccountIds.has(message.accountId),
+      ).length;
       knownMessageKeys.current = currentKeys;
-      if (isBackground && hasCompletedBackgroundSync.current && successful.length && backgroundSettings.notifications && newMessageCount) {
+      if (isBackground && hasCompletedBackgroundSync.current && successful.length && backgroundSettings.notifications && newNotifiableCount) {
         const granted = await isPermissionGranted() || await requestPermission() === "granted";
-        if (granted) sendNotification({ title: "RMail", body: `New messages: ${newMessageCount}.` });
+        if (granted) sendNotification({ title: "RMail", body: `New messages: ${newNotifiableCount}.` });
       }
       hasCompletedBackgroundSync.current = true;
       const errors = results.map((result, i) => result.status === "rejected" ? `${accountList[i].displayName}: ${result.reason instanceof Error ? result.reason.message : String(result.reason || "Unknown error")}` : null).filter(Boolean);

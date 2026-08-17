@@ -7,11 +7,13 @@ RMail is a lightweight desktop email client built with Rust, Tauri 2, React, and
 - Multiple IMAP/SMTP accounts and a unified inbox.
 - Gmail OAuth 2.0 with PKCE and XOAUTH2 for IMAP and SMTP.
 - Editable account connection settings with verification before saving.
-- Background synchronization with configurable frequency, system notifications, and tray behavior.
+- Background synchronization with configurable frequency and tray behavior.
+- Per-account desktop notifications for new mail, off by default; a general switch gates all of them.
 - Non-blocking cache refreshes that preserve the selected message and open content.
 - Local SQLite cache for mailboxes, headers, opened message bodies, attachment metadata, and drafts.
 - Plain-text composition, local drafts, SMTP sending, and explicit attachment downloads.
-- Mark individual or all messages as read with background IMAP synchronization and instant local UI updates.
+- Mark individual, selected, or all messages as read; delete individual or multi-selected messages (moved to the account's Trash mailbox).
+- A classic expandable folder tree per account, and renameable account names (Gmail accounts default to "email (name)" to stay distinguishable).
 - Dynamic system tray icon indicating unread message status.
 - Sanitized HTML message rendering in a sandboxed iframe.
 

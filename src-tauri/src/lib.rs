@@ -379,6 +379,17 @@ fn rename_account(
 }
 
 #[tauri::command]
+fn set_account_notifications(
+    account_id: i64,
+    enabled: bool,
+    state: tauri::State<'_, AppState>,
+) -> Result<Account, String> {
+    state
+        .database
+        .set_account_notifications(account_id, enabled)
+}
+
+#[tauri::command]
 async fn connect_gmail(state: tauri::State<'_, AppState>) -> Result<Account, String> {
     let authorization = google_oauth::authorize().await?;
     let display_name = gmail_display_name(&authorization.email, &authorization.display_name);
@@ -721,6 +732,7 @@ pub fn run() {
             create_account,
             update_account,
             rename_account,
+            set_account_notifications,
             connect_gmail,
             reconnect_gmail,
             delete_account,

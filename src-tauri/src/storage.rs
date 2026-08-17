@@ -33,6 +33,7 @@ pub struct Account {
     pub imap_host: String,
     pub smtp_host: String,
     pub auth_type: String,
+    pub notifications_enabled: bool,
 }
 
 #[derive(Debug, Serialize)]
@@ -108,7 +109,7 @@ impl Database {
         let connection = self.connection.lock().map_err(|error| error.to_string())?;
         let mut statement = connection
             .prepare(
-                "SELECT id, email, display_name, imap_host, smtp_host, auth_type
+                "SELECT id, email, display_name, imap_host, smtp_host, auth_type, notifications_enabled
                  FROM accounts
                  ORDER BY created_at ASC",
             )
@@ -122,6 +123,7 @@ impl Database {
                     imap_host: row.get(3)?,
                     smtp_host: row.get(4)?,
                     auth_type: row.get(5)?,
+                    notifications_enabled: row.get(6)?,
                 })
             })
             .map_err(|error| error.to_string())?
@@ -135,7 +137,8 @@ impl Database {
         let connection = self.connection.lock().map_err(|error| error.to_string())?;
         connection
             .query_row(
-                "SELECT id, email, display_name, imap_host, smtp_host, auth_type FROM accounts WHERE id = ?1",
+                "SELECT id, email, display_name, imap_host, smtp_host, auth_type, notifications_enabled
+                 FROM accounts WHERE id = ?1",
                 params![account_id],
                 |row| {
                     Ok(Account {
@@ -145,6 +148,7 @@ impl Database {
                         imap_host: row.get(3)?,
                         smtp_host: row.get(4)?,
                         auth_type: row.get(5)?,
+                        notifications_enabled: row.get(6)?,
                     })
                 },
             )
@@ -456,6 +460,7 @@ impl Database {
             imap_host: input.imap_host,
             smtp_host: input.smtp_host,
             auth_type: "password".to_string(),
+            notifications_enabled: false,
         })
     }
 
@@ -468,15 +473,16 @@ impl Database {
             smtp_host: input.smtp_host,
         })?;
         let mut connection = self.connection.lock().map_err(|error| error.to_string())?;
-        let (current_email, current_imap_host, auth_type) = connection
+        let (current_email, current_imap_host, auth_type, notifications_enabled) = connection
             .query_row(
-                "SELECT email, imap_host, auth_type FROM accounts WHERE id = ?1",
+                "SELECT email, imap_host, auth_type, notifications_enabled FROM accounts WHERE id = ?1",
                 params![id],
                 |row| {
                     Ok((
                         row.get::<_, String>(0)?,
                         row.get::<_, String>(1)?,
                         row.get::<_, String>(2)?,
+                        row.get::<_, bool>(3)?,
                     ))
                 },
             )
@@ -519,6 +525,7 @@ impl Database {
             imap_host: input.imap_host,
             smtp_host: input.smtp_host,
             auth_type: "password".to_string(),
+            notifications_enabled,
         })
     }
 
@@ -545,6 +552,7 @@ impl Database {
             imap_host: "imap.gmail.com".to_string(),
             smtp_host: "smtp.gmail.com".to_string(),
             auth_type: "gmail_oauth".to_string(),
+            notifications_enabled: false,
         })
     }
 
@@ -728,6 +736,27 @@ impl Database {
         self.get_account(account_id)
     }
 
+    pub fn set_account_notifications(
+        &self,
+        account_id: i64,
+        enabled: bool,
+    ) -> Result<Account, String> {
+        let affected = {
+            let connection = self.connection.lock().map_err(|error| error.to_string())?;
+            connection
+                .execute(
+                    "UPDATE accounts SET notifications_enabled = ?1 WHERE id = ?2",
+                    params![enabled, account_id],
+                )
+                .map_err(|error| error.to_string())?
+        };
+        if affected == 0 {
+            return Err("Account was not found.".to_string());
+        }
+
+        self.get_account(account_id)
+    }
+
 
     fn initialize(&self) -> Result<(), String> {
         let connection = self.connection.lock().map_err(|error| error.to_string())?;
@@ -742,6 +771,7 @@ impl Database {
                      imap_host TEXT NOT NULL,
                      smtp_host TEXT NOT NULL,
                      auth_type TEXT NOT NULL DEFAULT 'password',
+                     notifications_enabled INTEGER NOT NULL DEFAULT 0,
                      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
                  );
                  CREATE TABLE IF NOT EXISTS mailboxes (
@@ -816,6 +846,12 @@ impl Database {
             &connection,
             "messages",
             "internal_date",
+            "INTEGER NOT NULL DEFAULT 0",
+        )?;
+        add_column_if_missing(
+            &connection,
+            "accounts",
+            "notifications_enabled",
             "INTEGER NOT NULL DEFAULT 0",
         )
     }
@@ -1317,5 +1353,35 @@ mod tests {
             "Work Gmail"
         );
         assert!(database.rename_account(gmail_account.id, "   ").is_err());
+    }
+
+    #[test]
+    fn notifications_are_disabled_by_default_and_toggle_per_account() {
+        let database = Database::in_memory().expect("database should initialize");
+        let account = database
+            .create_account(CreateAccountInput {
+                email: "hello@example.com".to_string(),
+                display_name: "RMail".to_string(),
+                imap_host: "imap.example.com".to_string(),
+                smtp_host: "smtp.example.com".to_string(),
+            })
+            .expect("account should be created");
+        assert!(!account.notifications_enabled);
+
+        let enabled = database
+            .set_account_notifications(account.id, true)
+            .expect("notifications should enable");
+        assert!(enabled.notifications_enabled);
+        assert!(
+            database
+                .get_account(account.id)
+                .expect("account should load")
+                .notifications_enabled
+        );
+
+        let disabled = database
+            .set_account_notifications(account.id, false)
+            .expect("notifications should disable");
+        assert!(!disabled.notifications_enabled);
     }
 }
