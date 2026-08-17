@@ -620,13 +620,33 @@ fn ensure_message_source_size(size: u64) -> Result<(), String> {
     Ok(())
 }
 
+/// CSS properties allowed in `style="..."` attributes. Excludes exotic legacy
+/// vectors with no legitimate styling use (`behavior`, `-moz-binding`, `filter`,
+/// `mask*`, `content`, `cursor`) while permitting normal layout/typography and
+/// `url(...)`-based backgrounds, since remote images are already allowed via `<img>`.
+const ALLOWED_STYLE_PROPERTIES: &[&str] = &[
+    "color", "background", "background-color", "background-image", "background-position",
+    "background-repeat", "background-size",
+    "font", "font-family", "font-size", "font-style", "font-weight",
+    "line-height", "text-align", "text-decoration", "text-transform", "letter-spacing",
+    "padding", "padding-top", "padding-right", "padding-bottom", "padding-left",
+    "margin", "margin-top", "margin-right", "margin-bottom", "margin-left",
+    "border", "border-color", "border-width", "border-style", "border-radius",
+    "border-top", "border-right", "border-bottom", "border-left",
+    "width", "height", "max-width", "min-width", "max-height", "min-height",
+    "display", "vertical-align", "white-space", "overflow", "text-overflow",
+    "box-sizing", "opacity",
+];
+
 fn sanitize_html(value: String) -> String {
     let mut sanitizer = HtmlSanitizer::default();
     sanitizer
         .rm_tags(&[
-            "audio", "base", "button", "embed", "form", "iframe", "img", "input", "link", "object",
+            "audio", "base", "button", "embed", "form", "iframe", "input", "link", "object",
             "picture", "source", "video",
         ])
+        .add_generic_attributes(&["style", "align", "valign", "bgcolor", "color", "width", "height"])
+        .filter_style_properties(ALLOWED_STYLE_PROPERTIES.iter().copied().collect())
         .url_relative(UrlRelative::Deny);
     sanitizer.clean(&value).to_string()
 }
@@ -955,23 +975,29 @@ mod tests {
     #[test]
     fn sanitizes_html_and_preserves_plain_text() {
         let message = parse_message(
-            b"Content-Type: multipart/alternative; boundary=part\r\n\r\n--part\r\nContent-Type: text/plain\r\n\r\nPlain body\r\n--part\r\nContent-Type: text/html\r\n\r\n<script>alert(1)</script><img src=\"https://tracker.test/pixel\"><p>HTML body</p>\r\n--part--\r\n",
+            b"Content-Type: multipart/alternative; boundary=part\r\n\r\n--part\r\nContent-Type: text/plain\r\n\r\nPlain body\r\n--part\r\nContent-Type: text/html\r\n\r\n<script>alert(1)</script><img src=\"https://example.test/logo.png\"><p>HTML body</p>\r\n--part--\r\n",
         )
         .expect("message should parse");
 
         assert_eq!(message.text, "Plain body");
-        assert!(message
-            .html
-            .as_deref()
-            .is_some_and(|html| html.contains("HTML body")));
-        assert!(message
-            .html
-            .as_deref()
-            .is_some_and(|html| !html.contains("script")));
-        assert!(message
-            .html
-            .as_deref()
-            .is_some_and(|html| !html.contains("img")));
+        let html = message.html.expect("html body should be present");
+        assert!(html.contains("HTML body"));
+        assert!(!html.contains("script"));
+        // Images are intentionally allowed (see sanitize_html) - no tracking-pixel blocking.
+        assert!(html.contains("<img src=\"https://example.test/logo.png\""));
+    }
+
+    #[test]
+    fn keeps_safe_inline_styles_and_allows_css_backgrounds() {
+        let message = parse_message(
+            b"Content-Type: text/html\r\n\r\n<p style=\"color: red; background: url(https://example.test/banner.png); behavior: url(evil.htc)\">Styled</p>\r\n",
+        )
+        .expect("message should parse");
+
+        let html = message.html.expect("html body should be present");
+        assert!(html.contains("color:red"));
+        assert!(html.contains("background:url(https://example.test/banner.png)"));
+        assert!(!html.contains("behavior"));
     }
 
     #[test]
