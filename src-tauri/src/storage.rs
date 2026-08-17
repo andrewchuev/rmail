@@ -678,6 +678,56 @@ impl Database {
         Ok(())
     }
 
+    pub fn delete_cached_messages(
+        &self,
+        account_id: i64,
+        mailbox_path: &str,
+        uids: &[u32],
+    ) -> Result<(), String> {
+        if uids.is_empty() {
+            return Ok(());
+        }
+        let mut connection = self.connection.lock().map_err(|error| error.to_string())?;
+        let transaction = connection.transaction().map_err(|error| error.to_string())?;
+
+        let placeholders = uids.iter().map(|_| "?").collect::<Vec<_>>().join(",");
+        let query = format!(
+            "DELETE FROM messages WHERE account_id = ? AND mailbox_path = ? AND uid IN ({})",
+            placeholders
+        );
+
+        let mut params: Vec<&dyn rusqlite::ToSql> = vec![&account_id, &mailbox_path];
+        for uid in uids {
+            params.push(uid);
+        }
+
+        transaction.execute(&query, rusqlite::params_from_iter(params)).map_err(|error| error.to_string())?;
+        transaction.commit().map_err(|error| error.to_string())?;
+        Ok(())
+    }
+
+    pub fn rename_account(&self, account_id: i64, display_name: &str) -> Result<Account, String> {
+        let display_name = display_name.trim();
+        if display_name.is_empty() {
+            return Err("Enter an account name.".to_string());
+        }
+
+        let affected = {
+            let connection = self.connection.lock().map_err(|error| error.to_string())?;
+            connection
+                .execute(
+                    "UPDATE accounts SET display_name = ?1 WHERE id = ?2",
+                    params![display_name, account_id],
+                )
+                .map_err(|error| error.to_string())?
+        };
+        if affected == 0 {
+            return Err("Account was not found.".to_string());
+        }
+
+        self.get_account(account_id)
+    }
+
 
     fn initialize(&self) -> Result<(), String> {
         let connection = self.connection.lock().map_err(|error| error.to_string())?;
@@ -1173,5 +1223,99 @@ mod tests {
                 .expect("body should load"),
             None
         );
+    }
+
+    #[test]
+    fn deletes_cached_messages_and_related_data() {
+        let database = Database::in_memory().expect("database should initialize");
+        let account = database
+            .create_account(CreateAccountInput {
+                email: "hello@example.com".to_string(),
+                display_name: "RMail".to_string(),
+                imap_host: "imap.example.com".to_string(),
+                smtp_host: "smtp.example.com".to_string(),
+            })
+            .expect("account should be created");
+        database
+            .store_inbox_snapshot(
+                account.id,
+                &InboxSnapshot {
+                    mailboxes: vec![MailboxSnapshot {
+                        path: "INBOX".to_string(),
+                        uid_validity: Some(1),
+                    }],
+                    messages: vec![
+                        MessageSnapshot {
+                            mailbox_path: "INBOX".to_string(),
+                            uid: 1,
+                            sender: "Sender".to_string(),
+                            subject: "Keep".to_string(),
+                            date: "Today".to_string(),
+                            internal_date: 1,
+                            is_read: false,
+                        },
+                        MessageSnapshot {
+                            mailbox_path: "INBOX".to_string(),
+                            uid: 2,
+                            sender: "Sender".to_string(),
+                            subject: "Delete".to_string(),
+                            date: "Today".to_string(),
+                            internal_date: 2,
+                            is_read: false,
+                        },
+                    ],
+                },
+            )
+            .expect("snapshot should persist");
+        database
+            .store_message_body(
+                account.id,
+                "INBOX",
+                2,
+                &MessageBody {
+                    text: "Cached body".to_string(),
+                    html: None,
+                    attachments: Vec::new(),
+                },
+            )
+            .expect("body should persist");
+
+        database
+            .delete_cached_messages(account.id, "INBOX", &[2])
+            .expect("message should delete");
+
+        let remaining = database
+            .list_cached_messages(account.id, "INBOX")
+            .expect("messages should list");
+        assert_eq!(remaining.len(), 1);
+        assert_eq!(remaining[0].uid, 1);
+        assert_eq!(
+            database
+                .get_cached_message_body(account.id, "INBOX", 2)
+                .expect("body should load"),
+            None
+        );
+    }
+
+    #[test]
+    fn renames_any_account_regardless_of_auth_type() {
+        let database = Database::in_memory().expect("database should initialize");
+        let gmail_account = database
+            .create_gmail_account("person@gmail.com", "person@gmail.com (Person)")
+            .expect("Gmail account should be created");
+
+        let renamed = database
+            .rename_account(gmail_account.id, "  Work Gmail  ")
+            .expect("Gmail account should rename");
+
+        assert_eq!(renamed.display_name, "Work Gmail");
+        assert_eq!(
+            database
+                .get_account(gmail_account.id)
+                .expect("account should load")
+                .display_name,
+            "Work Gmail"
+        );
+        assert!(database.rename_account(gmail_account.id, "   ").is_err());
     }
 }

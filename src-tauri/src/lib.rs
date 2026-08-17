@@ -212,6 +212,59 @@ async fn mark_multiple_messages_read(
     }
 }
 
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct DeleteMessagesInput {
+    account_id: i64,
+    mailbox_path: String,
+    uid: u32,
+}
+
+#[tauri::command]
+async fn delete_messages(
+    messages: Vec<DeleteMessagesInput>,
+    state: tauri::State<'_, AppState>,
+) -> Result<(), String> {
+    // Group by (account_id, mailbox_path)
+    let mut groups: HashMap<(i64, String), Vec<u32>> = HashMap::new();
+    for msg in messages {
+        groups.entry((msg.account_id, msg.mailbox_path)).or_default().push(msg.uid);
+    }
+
+    let mut sync_errors = Vec::new();
+    for ((account_id, mailbox_path), uids) in groups {
+        let account = state.database.get_account(account_id)?;
+        state.database.delete_cached_messages(account_id, &mailbox_path, &uids)?;
+
+        let connection = match mail_connection(&account).await {
+            Ok(connection) => connection,
+            Err(error) => {
+                sync_errors.push(format!("account {account_id}: {error}"));
+                continue;
+            }
+        };
+        if let Err(error) = crate::mail::delete_messages(
+            &state.imap_pool,
+            account_id,
+            connection,
+            &mailbox_path,
+            &uids,
+        )
+        .await
+        {
+            sync_errors.push(format!("account {account_id}: {error}"));
+        }
+    }
+
+    if sync_errors.is_empty() {
+        Ok(())
+    } else {
+        let message = sync_errors.join("; ");
+        tauri_plugin_log::log::error!("delete_messages remote sync failed: {message}");
+        Err(message)
+    }
+}
+
 #[tauri::command]
 fn diagnostic_log_path(app: tauri::AppHandle) -> Result<String, String> {
     app.path()
@@ -317,11 +370,21 @@ async fn update_account(
 }
 
 #[tauri::command]
+fn rename_account(
+    account_id: i64,
+    display_name: String,
+    state: tauri::State<'_, AppState>,
+) -> Result<Account, String> {
+    state.database.rename_account(account_id, &display_name)
+}
+
+#[tauri::command]
 async fn connect_gmail(state: tauri::State<'_, AppState>) -> Result<Account, String> {
     let authorization = google_oauth::authorize().await?;
+    let display_name = gmail_display_name(&authorization.email, &authorization.display_name);
     let account = state
         .database
-        .create_gmail_account(&authorization.email, &authorization.display_name)?;
+        .create_gmail_account(&authorization.email, &display_name)?;
     if let Err(error) =
         google_oauth::store_refresh_token(&authorization.email, &authorization.refresh_token)
     {
@@ -329,6 +392,18 @@ async fn connect_gmail(state: tauri::State<'_, AppState>) -> Result<Account, Str
         return Err(error);
     }
     Ok(account)
+}
+
+/// Formats a new Gmail account's default display name as "email (name)" so
+/// two Gmail accounts belonging to the same Google profile name stay
+/// distinguishable in the account list. Falls back to the email alone if
+/// Google didn't return a distinct name.
+fn gmail_display_name(email: &str, name: &str) -> String {
+    if name.trim().is_empty() || name.eq_ignore_ascii_case(email) {
+        email.to_string()
+    } else {
+        format!("{email} ({name})")
+    }
 }
 
 #[tauri::command]
@@ -645,6 +720,7 @@ pub fn run() {
             set_hide_on_close,
             create_account,
             update_account,
+            rename_account,
             connect_gmail,
             reconnect_gmail,
             delete_account,
@@ -660,8 +736,31 @@ pub fn run() {
             sync_account,
             mark_message_read,
             mark_multiple_messages_read,
+            delete_messages,
             set_tray_unread_state
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::gmail_display_name;
+
+    #[test]
+    fn formats_gmail_display_name_with_email_first() {
+        assert_eq!(
+            gmail_display_name("person@gmail.com", "Person Name"),
+            "person@gmail.com (Person Name)"
+        );
+    }
+
+    #[test]
+    fn falls_back_to_email_alone_without_a_distinct_name() {
+        assert_eq!(gmail_display_name("person@gmail.com", ""), "person@gmail.com");
+        assert_eq!(
+            gmail_display_name("person@gmail.com", "person@gmail.com"),
+            "person@gmail.com"
+        );
+    }
 }

@@ -25,8 +25,8 @@ export function decodeMutf7(str: string): string {
 
 export function folderLabel(path: string) {
   if (path.toUpperCase() === "INBOX") return "Inbox";
-  const decoded = decodeMutf7(path);
-  return decoded;
+  const withoutGmailPrefix = path.replace(/^\[Gmail\]\//i, "");
+  return decodeMutf7(withoutGmailPrefix);
 }
 
 export function attachmentFileName(name: string) {

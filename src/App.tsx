@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState, useTransition, type FormEvent, type ReactNode } from "react";
-import { Archive, ArrowLeft, Clock3, CheckCheck, Inbox, LayoutTemplate, List, Paperclip, PenLine, Plus, Search, Settings, Trash2 } from "lucide-react";
+import { Archive, ArrowLeft, ChevronRight, Clock3, CheckCheck, Inbox, LayoutTemplate, List, Paperclip, PenLine, Plus, Search, Settings, Trash2, X } from "lucide-react";
 import { save } from "@tauri-apps/plugin-dialog";
 import { isPermissionGranted, requestPermission, sendNotification } from "@tauri-apps/plugin-notification";
 import { listen } from "@tauri-apps/api/event";
@@ -23,6 +23,7 @@ import {
 } from "@/components/ui/tooltip";
 import {
   deleteDraft,
+  deleteMessages,
   listAccounts,
   listCachedMailboxes,
   listCachedMessages,
@@ -39,8 +40,8 @@ import {
   type CachedMailbox,
   type CachedMessage,
   type Draft,
-  type MarkMessageReadInput,
   type MessageBody,
+  type MessageRef,
 } from "@/lib/accounts";
 import { applyWindowSettings, loadBackgroundSettings, saveBackgroundSettings, type BackgroundSettings } from "@/lib/settings";
 import "./App.css";
@@ -101,6 +102,7 @@ function App() {
   const [activeAccountId, setActiveAccountId] = useState<number | null>(null);
   const [activeFolder, setActiveFolder] = useState("INBOX");
   const [selectedMessageKey, setSelectedMessageKey] = useState<string | null>(null);
+  const [selectedMessageKeys, setSelectedMessageKeys] = useState<Set<string>>(new Set());
   const [query, setQuery] = useState("");
   const [isComposeOpen, setComposeOpen] = useState(false);
   const [compose, setCompose] = useState<ComposeState>(emptyCompose);
@@ -164,6 +166,71 @@ function App() {
         .includes(normalizedQuery),
     );
   }, [cachedMessages, query]);
+
+  const selectedInView = useMemo(
+    () => visibleMessages.filter((message) => selectedMessageKeys.has(messageKey(message))),
+    [visibleMessages, selectedMessageKeys],
+  );
+
+  function toggleMessageSelection(key: string, checked: boolean) {
+    setSelectedMessageKeys((current) => {
+      const next = new Set(current);
+      if (checked) {
+        next.add(key);
+      } else {
+        next.delete(key);
+      }
+      return next;
+    });
+  }
+
+  function messageRefs(messages: CachedMessage[]): MessageRef[] {
+    return messages.map((message) => ({
+      accountId: message.accountId,
+      mailboxPath: message.mailboxPath,
+      uid: message.uid,
+    }));
+  }
+
+  function removeMessagesFromCache(messages: CachedMessage[]) {
+    const keys = new Set(messages.map(messageKey));
+    setCachedMessages((current) => current.filter((message) => !keys.has(messageKey(message))));
+    if (selectedMessageKey && keys.has(selectedMessageKey)) {
+      setSelectedMessageKey(null);
+    }
+  }
+
+  function handleBulkMarkRead() {
+    const targets = selectedInView.filter((message) => !message.isRead);
+    setSelectedMessageKeys(new Set());
+    if (!targets.length) return;
+
+    setCachedMessages((current) => {
+      const keys = new Set(targets.map(messageKey));
+      return current.map((message) => (keys.has(messageKey(message)) ? { ...message, isRead: true } : message));
+    });
+    markMultipleMessagesRead(messageRefs(targets)).catch((reason) => {
+      console.error("Unable to mark the selected messages as read:", reason);
+    });
+  }
+
+  function handleBulkDelete() {
+    const targets = selectedInView;
+    setSelectedMessageKeys(new Set());
+    if (!targets.length) return;
+
+    removeMessagesFromCache(targets);
+    deleteMessages(messageRefs(targets)).catch((reason) => {
+      console.error("Unable to delete the selected messages:", reason);
+    });
+  }
+
+  function handleDeleteMessage(message: CachedMessage) {
+    removeMessagesFromCache([message]);
+    deleteMessages(messageRefs([message])).catch((reason) => {
+      console.error("Unable to delete the message:", reason);
+    });
+  }
 
   const selectedMessage = cachedMessages.find(
     (message) => messageKey(message) === selectedMessageKey,
@@ -250,6 +317,10 @@ function App() {
     });
     return () => unlisten?.();
   }, [accounts, backgroundSettings]);
+
+  useEffect(() => {
+    setSelectedMessageKeys(new Set());
+  }, [activeAccountId, activeFolder]);
 
   useEffect(() => {
     if (activeAccountId === null) {
@@ -545,80 +616,112 @@ function App() {
     if (unreadMessages.length === 0) return;
 
     // Update local state immediately
-    setCachedMessages((current) =>
-      current.map((m) => {
-        if (unreadMessages.some((um) => messageKey(um) === messageKey(m))) {
-          return { ...m, isRead: true };
-        }
-        return m;
-      })
-    );
+    setCachedMessages((current) => {
+      const keys = new Set(unreadMessages.map(messageKey));
+      return current.map((m) => (keys.has(messageKey(m)) ? { ...m, isRead: true } : m));
+    });
 
-    const payload: MarkMessageReadInput[] = unreadMessages.map((message) => ({
-      accountId: message.accountId,
-      mailboxPath: message.mailboxPath,
-      uid: message.uid,
-    }));
-    markMultipleMessagesRead(payload).catch((reason) => {
+    markMultipleMessagesRead(messageRefs(unreadMessages)).catch((reason) => {
       console.error("Unable to mark all messages as read:", reason);
     });
   };
 
-  const renderMessageList = () => (
-    <ScrollArea className="min-h-0 flex-1">
-      <div className="p-2">
-                  {visibleMessages.length ? (
-                    visibleMessages.map((message) => (
-                      <button
-                        className="message-row"
-                        data-selected={selectedMessageKey === messageKey(message)}
-                        key={messageKey(message)}
-                        onClick={() => {
-                          if (!message.isRead) {
-                            setCachedMessages((current) =>
-                              current.map((m) => (messageKey(m) === messageKey(message) ? { ...m, isRead: true } : m))
-                            );
-                            markMessageRead({
-                              accountId: message.accountId,
-                              mailboxPath: message.mailboxPath,
-                              uid: message.uid,
-                            }).catch(console.error);
-                          }
-                          setSelectedMessageKey(messageKey(message));
-                        }}
-                        type="button"
-                      >
-                        <div className={`flex ${layoutMode === "compact" ? "items-center gap-4" : "items-start gap-3"}`}>
-                          <span className={`size-2 shrink-0 rounded-full bg-primary opacity-0 data-[unread=true]:opacity-100 ${layoutMode === "compact" ? "" : "mt-1"}`} data-unread={!message.isRead} />
-                          {layoutMode === "compact" ? (
-                            <div className="min-w-0 flex-1 flex items-center gap-4 text-left">
-                              <p className={`w-64 shrink-0 truncate text-sm ${!message.isRead ? "font-semibold text-foreground/90" : "font-normal text-foreground/70"}`}>{message.sender}</p>
-                              <p className={`flex-1 truncate text-sm ${!message.isRead ? "font-semibold text-foreground/90" : "font-normal text-foreground/70"}`}>
-                                {message.subject} <span className="text-muted-foreground font-normal ml-2">&middot; {message.accountDisplayName} &middot; {folderLabel(message.mailboxPath)}</span>
-                              </p>
-                              <time className={`shrink-0 text-xs ${!message.isRead ? "font-semibold text-foreground/90" : "text-muted-foreground"}`}>{message.date}</time>
-                            </div>
-                          ) : (
-                            <div className="min-w-0 flex-1 text-left">
-                              <div className="flex items-center gap-3">
-                                <p className={`truncate text-sm ${!message.isRead ? "font-semibold text-foreground/90" : "font-medium text-foreground/70"}`}>{message.sender}</p>
-                                <time className={`ml-auto text-xs ${!message.isRead ? "font-semibold text-foreground/90" : "text-muted-foreground"}`}>{message.date}</time>
+  const renderMessageList = () => {
+    const allVisibleSelected = visibleMessages.length > 0 && selectedInView.length === visibleMessages.length;
+
+    return (
+      <ScrollArea className="min-h-0 flex-1">
+        {selectedInView.length > 0 ? (
+          <div className="sticky top-0 z-10 flex items-center gap-3 border-b bg-background/95 px-4 py-2 backdrop-blur">
+            <input
+              aria-label="Select all visible messages"
+              checked={allVisibleSelected}
+              className="size-4 accent-primary"
+              onChange={(event) => setSelectedMessageKeys(event.target.checked ? new Set(visibleMessages.map(messageKey)) : new Set())}
+              type="checkbox"
+            />
+            <span className="text-sm font-medium">{selectedInView.length} selected</span>
+            <div className="ml-auto flex gap-1">
+              <IconButton label="Mark as read" onClick={handleBulkMarkRead}>
+                <CheckCheck />
+              </IconButton>
+              <IconButton label="Delete" onClick={handleBulkDelete}>
+                <Trash2 />
+              </IconButton>
+              <IconButton label="Clear selection" onClick={() => setSelectedMessageKeys(new Set())}>
+                <X />
+              </IconButton>
+            </div>
+          </div>
+        ) : null}
+        <div className="p-2">
+                    {visibleMessages.length ? (
+                      visibleMessages.map((message) => {
+                        const key = messageKey(message);
+                        const isChecked = selectedMessageKeys.has(key);
+                        return (
+                          <div className="group/row flex items-center gap-1" key={key}>
+                            <span className={`shrink-0 pl-1.5 transition-opacity ${selectedInView.length > 0 || isChecked ? "opacity-100" : "opacity-0 group-hover/row:opacity-100"}`}>
+                              <input
+                                aria-label={`Select message from ${message.sender}`}
+                                checked={isChecked}
+                                className="size-4 accent-primary"
+                                onChange={(event) => toggleMessageSelection(key, event.target.checked)}
+                                type="checkbox"
+                              />
+                            </span>
+                            <button
+                              className="message-row flex-1"
+                              data-selected={selectedMessageKey === key}
+                              onClick={() => {
+                                if (!message.isRead) {
+                                  setCachedMessages((current) =>
+                                    current.map((m) => (messageKey(m) === key ? { ...m, isRead: true } : m))
+                                  );
+                                  markMessageRead({
+                                    accountId: message.accountId,
+                                    mailboxPath: message.mailboxPath,
+                                    uid: message.uid,
+                                  }).catch(console.error);
+                                }
+                                setSelectedMessageKey(key);
+                              }}
+                              type="button"
+                            >
+                              <div className={`flex ${layoutMode === "compact" ? "items-center gap-4" : "items-start gap-3"}`}>
+                                <span className={`size-2 shrink-0 rounded-full bg-primary opacity-0 data-[unread=true]:opacity-100 ${layoutMode === "compact" ? "" : "mt-1"}`} data-unread={!message.isRead} />
+                                {layoutMode === "compact" ? (
+                                  <div className="min-w-0 flex-1 flex items-center gap-4 text-left">
+                                    <p className={`w-64 shrink-0 truncate text-sm ${!message.isRead ? "font-semibold text-foreground/90" : "font-normal text-foreground/70"}`}>{message.sender}</p>
+                                    <p className={`flex-1 truncate text-sm ${!message.isRead ? "font-semibold text-foreground/90" : "font-normal text-foreground/70"}`}>
+                                      {message.subject} <span className="text-muted-foreground font-normal ml-2">&middot; {message.accountDisplayName} &middot; {folderLabel(message.mailboxPath)}</span>
+                                    </p>
+                                    <time className={`shrink-0 text-xs ${!message.isRead ? "font-semibold text-foreground/90" : "text-muted-foreground"}`}>{message.date}</time>
+                                  </div>
+                                ) : (
+                                  <div className="min-w-0 flex-1 text-left">
+                                    <div className="flex items-center gap-3">
+                                      <p className={`truncate text-sm ${!message.isRead ? "font-semibold text-foreground/90" : "font-medium text-foreground/70"}`}>{message.sender}</p>
+                                      <time className={`ml-auto text-xs ${!message.isRead ? "font-semibold text-foreground/90" : "text-muted-foreground"}`}>{message.date}</time>
+                                    </div>
+                                    <p className={`mt-1 truncate text-sm ${!message.isRead ? "font-semibold text-foreground/90" : "font-normal text-foreground/70"}`}>{message.subject}</p>
+                                    <p className="mt-1 text-xs leading-5 text-muted-foreground">{message.accountDisplayName} &middot; {folderLabel(message.mailboxPath)}</p>
+                                  </div>
+                                )}
                               </div>
-                              <p className={`mt-1 truncate text-sm ${!message.isRead ? "font-semibold text-foreground/90" : "font-normal text-foreground/70"}`}>{message.subject}</p>
-                              <p className="mt-1 text-xs leading-5 text-muted-foreground">{message.accountDisplayName} &middot; {folderLabel(message.mailboxPath)}</p>
-                            </div>
-                          )}
-                        </div>
-                      </button>
-                    ))
-                  ) : (
-                    <div className="grid min-h-48 place-items-center px-8 text-center text-sm text-muted-foreground">
-                      {query ? "No messages found. Try another search." : "This folder has no synchronized messages yet."}
-                    </div>
-                  )}
-                </div>
-    </ScrollArea>
-  );
+                            </button>
+                          </div>
+                        );
+                      })
+                    ) : (
+                      <div className="grid min-h-48 place-items-center px-8 text-center text-sm text-muted-foreground">
+                        {query ? "No messages found. Try another search." : "This folder has no synchronized messages yet."}
+                      </div>
+                    )}
+                  </div>
+      </ScrollArea>
+    );
+  };
 
   const renderMessageViewer = () => (
     <ScrollArea className="min-h-0 flex-1">
@@ -757,7 +860,7 @@ function App() {
                     <header className="flex items-center justify-end border-b px-6 py-2">
                       <div className="flex gap-1">
                         <IconButton label="Archive"><Archive /></IconButton>
-                        <IconButton label="Delete"><Trash2 /></IconButton>
+                        <IconButton label="Delete" onClick={() => handleDeleteMessage(selectedMessage)}><Trash2 /></IconButton>
                         <IconButton label="Snooze"><Clock3 /></IconButton>
 
                       </div>
@@ -813,34 +916,48 @@ function App() {
                   <span>All inboxes</span>
                 </button>
                 <p className="px-2 pt-4 text-xs font-medium text-muted-foreground">Accounts</p>
-                {accountList.map((account) => (
-                  <button
-                    className="folder-link"
-                    data-active={activeAccountId === account.id}
-                    key={account.id}
-                    onClick={() => {
-                      setActiveAccountId(account.id);
-                      setActiveFolder("INBOX");
-                    }}
-                    type="button"
-                  >
-                    <span className="truncate">{account.displayName}</span>
-                  </button>
-                ))}
-                {activeAccountId === null ? null : mailboxes.map((mailbox) => (
-                  <button
-                    aria-current={activeFolder === mailbox.path ? "page" : undefined}
-                    className="folder-link"
-                    data-active={activeFolder === mailbox.path}
-                    key={`${activeAccountId}:${mailbox.path}`}
-                    onClick={() => setActiveFolder(mailbox.path)}
-                    type="button"
-                  >
-                    <Inbox className="size-4" />
-                    <span>{folderLabel(mailbox.path)}</span>
-                    {mailbox.unreadCount ? <span className="ml-auto text-xs tabular-nums">{mailbox.unreadCount}</span> : null}
-                  </button>
-                ))}
+                {accountList.map((account) => {
+                  const isExpanded = activeAccountId === account.id;
+                  return (
+                    <div key={account.id}>
+                      <button
+                        aria-expanded={isExpanded}
+                        className="folder-link"
+                        data-active={isExpanded}
+                        onClick={() => {
+                          if (isExpanded) {
+                            setActiveAccountId(null);
+                          } else {
+                            setActiveAccountId(account.id);
+                            setActiveFolder("INBOX");
+                          }
+                        }}
+                        type="button"
+                      >
+                        <ChevronRight className={`size-3.5 shrink-0 text-muted-foreground transition-transform ${isExpanded ? "rotate-90" : ""}`} />
+                        <span className="truncate">{account.displayName}</span>
+                      </button>
+                      {isExpanded ? (
+                        <div className="ml-4 mt-1 space-y-1 border-l pl-2">
+                          {mailboxes.map((mailbox) => (
+                            <button
+                              aria-current={activeFolder === mailbox.path ? "page" : undefined}
+                              className="folder-link"
+                              data-active={activeFolder === mailbox.path}
+                              key={`${account.id}:${mailbox.path}`}
+                              onClick={() => setActiveFolder(mailbox.path)}
+                              type="button"
+                            >
+                              <Inbox className="size-4" />
+                              <span>{folderLabel(mailbox.path)}</span>
+                              {mailbox.unreadCount ? <span className="ml-auto text-xs tabular-nums">{mailbox.unreadCount}</span> : null}
+                            </button>
+                          ))}
+                        </div>
+                      ) : null}
+                    </div>
+                  );
+                })}
               </nav>
 
             </aside>
@@ -890,7 +1007,7 @@ function App() {
               <header className="flex items-center justify-between border-b px-6 py-4">
                 <div className="flex gap-1">
                   <IconButton label="Archive"><Archive /></IconButton>
-                  <IconButton label="Delete"><Trash2 /></IconButton>
+                  <IconButton label="Delete" onClick={selectedMessage ? () => handleDeleteMessage(selectedMessage) : undefined}><Trash2 /></IconButton>
                   <IconButton label="Snooze"><Clock3 /></IconButton>
                 </div>
 

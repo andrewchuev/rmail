@@ -768,6 +768,150 @@ async fn store_seen_flag(
     Ok(())
 }
 
+/// Deletes messages by moving them to the account's Trash mailbox (found via the
+/// SPECIAL-USE `\Trash` attribute, falling back to common Trash folder names).
+/// If no Trash mailbox can be found - or the messages are already in it - they
+/// are permanently removed instead (`\Deleted` + expunge).
+pub async fn delete_messages(
+    pool: &ImapSessionPool,
+    account_id: i64,
+    input: MailConnectionInput,
+    mailbox_path: &str,
+    uids: &[u32],
+) -> Result<(), String> {
+    if uids.is_empty() {
+        return Ok(());
+    }
+    let input = validate_input(input)?;
+    let uid_set = uids.iter().map(|u| u.to_string()).collect::<Vec<_>>().join(",");
+    let mut guard = pool.checkout(account_id).await;
+    if let Some(session) = guard.as_mut() {
+        if delete_via_session(session, mailbox_path, &uid_set).await.is_ok() {
+            return Ok(());
+        }
+    }
+    *guard = Some(connect_session(&input).await?);
+    let session = guard.as_mut().expect("session was just connected");
+    match delete_via_session(session, mailbox_path, &uid_set).await {
+        Ok(()) => Ok(()),
+        Err(error) => {
+            *guard = None;
+            Err(error)
+        }
+    }
+}
+
+async fn delete_via_session(
+    session: &mut ImapSession,
+    mailbox_path: &str,
+    uid_set: &str,
+) -> Result<(), String> {
+    within_timeout(session.select(mailbox_path), "Unable to open the mailbox.").await?;
+    match find_trash_mailbox(session).await {
+        Some(trash_path) if trash_path != mailbox_path => {
+            move_to_trash(session, uid_set, &trash_path).await
+        }
+        _ => purge_permanently(session, uid_set).await,
+    }
+}
+
+async fn move_to_trash(
+    session: &mut ImapSession,
+    uid_set: &str,
+    trash_path: &str,
+) -> Result<(), String> {
+    let capabilities = within_timeout(
+        session.capabilities(),
+        "Unable to read server capabilities.",
+    )
+    .await?;
+    if capabilities.has_str("MOVE") {
+        within_timeout(
+            session.uid_mv(uid_set, trash_path),
+            "Unable to move the message to Trash.",
+        )
+        .await?;
+        return Ok(());
+    }
+
+    within_timeout(
+        session.uid_copy(uid_set, trash_path),
+        "Unable to move the message to Trash.",
+    )
+    .await?;
+    mark_deleted_and_expunge(session, uid_set, capabilities.has_str("UIDPLUS")).await
+}
+
+async fn purge_permanently(session: &mut ImapSession, uid_set: &str) -> Result<(), String> {
+    let capabilities = within_timeout(
+        session.capabilities(),
+        "Unable to read server capabilities.",
+    )
+    .await?;
+    mark_deleted_and_expunge(session, uid_set, capabilities.has_str("UIDPLUS")).await
+}
+
+async fn mark_deleted_and_expunge(
+    session: &mut ImapSession,
+    uid_set: &str,
+    has_uidplus: bool,
+) -> Result<(), String> {
+    let mut stream = session
+        .uid_store(uid_set, r"+FLAGS (\Deleted)")
+        .await
+        .map_err(|e| e.to_string())?;
+    use futures_util::stream::StreamExt;
+    while let Some(res) = stream.next().await {
+        res.map_err(|e| e.to_string())?;
+    }
+    drop(stream);
+
+    if has_uidplus {
+        within_timeout(session.uid_expunge(uid_set), "Unable to remove the message.")
+            .await?
+            .try_collect::<Vec<_>>()
+            .await
+            .map_err(|e| e.to_string())?;
+    } else {
+        within_timeout(session.expunge(), "Unable to remove the message.")
+            .await?
+            .try_collect::<Vec<_>>()
+            .await
+            .map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
+async fn find_trash_mailbox(session: &mut ImapSession) -> Option<String> {
+    let mailboxes = within_timeout(
+        session.list(Some(""), Some("*")),
+        "Unable to list IMAP mailboxes.",
+    )
+    .await
+    .ok()?
+    .try_collect::<Vec<_>>()
+    .await
+    .ok()?;
+
+    let by_special_use = mailboxes.iter().find(|mailbox| {
+        mailbox
+            .attributes()
+            .iter()
+            .any(|attribute| matches!(attribute, async_imap::types::NameAttribute::Trash))
+    });
+
+    by_special_use
+        .or_else(|| {
+            mailboxes.iter().find(|mailbox| {
+                matches!(
+                    mailbox.name().to_ascii_lowercase().as_str(),
+                    "trash" | "[gmail]/trash" | "deleted items" | "deleted messages" | "inbox.trash"
+                )
+            })
+        })
+        .map(|mailbox| mailbox.name().to_string())
+}
+
 
 #[cfg(test)]
 mod tests {

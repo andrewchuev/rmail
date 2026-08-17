@@ -3,6 +3,7 @@ import { AppWindow, ArrowLeft, Bell, Clock3, Mail, Plus, Search } from "lucide-r
 import { Button } from "@/components/ui/button";
 import {
   reconnectGmail,
+  renameAccount,
   testMailConnection,
   updateAccount,
   type Account,
@@ -173,6 +174,21 @@ function AccountCredentialsEditor({
     }
   }
 
+  async function renameGoogleAccount(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setError(null);
+    setMessage(null);
+    setSaving(true);
+    try {
+      onUpdated(await renameAccount(account.id, input.displayName));
+      setMessage("Account name was saved.");
+    } catch (reason) {
+      setError(reasonMessage(reason, "Unable to rename the account."));
+    } finally {
+      setSaving(false);
+    }
+  }
+
   async function reconnectGoogle() {
     setError(null);
     setMessage(null);
@@ -195,8 +211,17 @@ function AccountCredentialsEditor({
           <div className="min-w-0 flex-1">
             <h3 className="font-semibold">{account.displayName}</h3>
             <p className="truncate text-sm text-muted-foreground">{account.email}</p>
+            <form className="mt-4 flex items-end gap-2" onSubmit={renameGoogleAccount}>
+              <label className="setup-field flex-1">
+                <span>Account name</span>
+                <input onChange={(event) => updateField("displayName", event.target.value)} required value={input.displayName} />
+              </label>
+              <Button disabled={isSaving} type="submit" variant="secondary">
+                {isSaving ? "Saving…" : "Rename"}
+              </Button>
+            </form>
             <p className="mt-3 text-sm leading-6 text-muted-foreground">Authentication is managed by Google OAuth. Reconnecting replaces the refresh token only after you sign in to the same account.</p>
-            <Button className="mt-4" disabled={isSaving} onClick={() => void reconnectGoogle()} type="button" variant="secondary">
+            <Button disabled={isSaving} onClick={() => void reconnectGoogle()} type="button" variant="secondary">
               {isSaving ? "Waiting for Google…" : "Reconnect Google"}
             </Button>
             {message ? <p className="mt-3 text-sm text-emerald-700 dark:text-emerald-400" role="status">{message}</p> : null}

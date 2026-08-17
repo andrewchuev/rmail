@@ -191,18 +191,26 @@ export async function loadMessageBody(
   });
 }
 
-export type MarkMessageReadInput = {
+export type MessageRef = {
   accountId: number;
   mailboxPath: string;
   uid: number;
 };
 
-export async function markMessageRead(input: MarkMessageReadInput): Promise<void> {
+export async function markMessageRead(input: MessageRef): Promise<void> {
   return invoke<void>("mark_message_read", { input });
 }
 
-export async function markMultipleMessagesRead(messages: MarkMessageReadInput[]): Promise<void> {
+export async function markMultipleMessagesRead(messages: MessageRef[]): Promise<void> {
   return invoke<void>("mark_multiple_messages_read", { messages });
+}
+
+export async function deleteMessages(messages: MessageRef[]): Promise<void> {
+  return invoke<void>("delete_messages", { messages });
+}
+
+export async function renameAccount(accountId: number, displayName: string): Promise<Account> {
+  return invoke<Account>("rename_account", { accountId, displayName });
 }
 
 export async function setTrayUnreadState(hasUnread: boolean): Promise<void> {
