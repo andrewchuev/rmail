@@ -145,13 +145,46 @@ function App() {
   const syncInProgress = useRef(false);
   const htmlFrameRef = useRef<HTMLIFrameElement>(null);
 
-  function resizeHtmlFrame() {
+  // Keeps the HTML message iframe sized to fit its content so the outer pane
+  // is the only scroll container. A one-off measurement on "load" isn't
+  // enough: images without explicit width/height grow the document after
+  // load finishes, which would otherwise leave the iframe too short and
+  // produce a second, inner scrollbar. A ResizeObserver on the iframe's own
+  // document keeps the height in sync as content (images, fonts) settles.
+  useEffect(() => {
     const frame = htmlFrameRef.current;
-    const height = frame?.contentDocument?.documentElement.scrollHeight;
-    if (frame && height) {
-      frame.style.height = `${height}px`;
+    if (!frame || contentMode !== "html" || !messageBody?.html) {
+      return;
     }
-  }
+
+    let observer: ResizeObserver | undefined;
+
+    const syncHeight = () => {
+      const root = frame.contentDocument?.documentElement;
+      if (root) {
+        frame.style.height = `${root.scrollHeight}px`;
+      }
+    };
+
+    const handleLoad = () => {
+      observer?.disconnect();
+      const root = frame.contentDocument?.documentElement;
+      if (!root) return;
+      syncHeight();
+      observer = new ResizeObserver(syncHeight);
+      observer.observe(root);
+    };
+
+    if (frame.contentDocument?.readyState === "complete") {
+      handleLoad();
+    }
+    frame.addEventListener("load", handleLoad);
+
+    return () => {
+      frame.removeEventListener("load", handleLoad);
+      observer?.disconnect();
+    };
+  }, [contentMode, messageBody?.html]);
 
   const visibleMessages = useMemo(() => {
     const normalizedQuery = query.trim().toLowerCase();
@@ -759,7 +792,6 @@ function App() {
             <div className="mt-5 px-4">
               <iframe
                 className="w-full rounded-lg border"
-                onLoad={resizeHtmlFrame}
                 ref={htmlFrameRef}
                 referrerPolicy="no-referrer"
                 sandbox="allow-same-origin"
