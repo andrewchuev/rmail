@@ -1,6 +1,6 @@
 [package]
 name = "rmail"
-version = "0.1.3"
+version = "0.1.4"
 description = "A lightweight desktop email client."
 edition = "2021"
 default-run = "rmail"
