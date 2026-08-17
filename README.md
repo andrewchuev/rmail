@@ -67,3 +67,12 @@ When developing in WSL, install `node_modules` inside WSL. Do not reuse dependen
 - Drafts cannot yet be listed or reopened from the UI.
 - Flag, archive, and delete IMAP actions are not implemented (Mark as read is now fully supported).
 - Search covers cached sender and subject fields, not full message bodies.
+
+## Non-goals
+
+Intentionally out of scope for now:
+
+- OAuth for providers other than Gmail.
+- Calendar, contacts, server-side rules, and filters.
+- PGP/S-MIME, snooze, scheduled send, and AI features.
+- Mobile clients and team/shared-inbox collaboration.
