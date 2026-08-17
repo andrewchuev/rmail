@@ -12,6 +12,8 @@ use mailparse::{parse_mail, DispositionType, ParsedMail};
 use serde::{Deserialize, Serialize};
 use tokio::{io::AsyncWriteExt, net::TcpStream, time::timeout};
 
+use crate::imap_pool::{ImapSession, ImapSessionPool};
+
 const CONNECTION_TIMEOUT: Duration = Duration::from_secs(15);
 const MESSAGE_SYNC_LIMIT: u32 = 50;
 const MESSAGE_BODY_CHARACTER_LIMIT: usize = 200_000;
@@ -153,9 +155,31 @@ fn imap_failure_code(message: &str) -> &'static str {
     }
 }
 
-pub async fn sync_mailboxes(input: MailConnectionInput) -> Result<InboxSnapshot, String> {
+pub async fn sync_mailboxes(
+    pool: &ImapSessionPool,
+    account_id: i64,
+    input: MailConnectionInput,
+) -> Result<InboxSnapshot, String> {
     let input = validate_input(input)?;
-    let mut session = connect_session(&input).await?;
+    let mut guard = pool.checkout(account_id).await;
+
+    if let Some(session) = guard.as_mut() {
+        if let Ok(snapshot) = sync_via_session(session).await {
+            return Ok(snapshot);
+        }
+    }
+    *guard = Some(connect_session(&input).await?);
+    let session = guard.as_mut().expect("session was just connected");
+    match sync_via_session(session).await {
+        Ok(snapshot) => Ok(snapshot),
+        Err(error) => {
+            *guard = None;
+            Err(error)
+        }
+    }
+}
+
+async fn sync_via_session(session: &mut ImapSession) -> Result<InboxSnapshot, String> {
     let mut mailboxes = within_timeout(
         session.list(Some(""), Some("*")),
         "Unable to list IMAP mailboxes.",
@@ -179,7 +203,7 @@ pub async fn sync_mailboxes(input: MailConnectionInput) -> Result<InboxSnapshot,
     let mut messages = Vec::new();
 
     for mailbox in &mut mailboxes {
-        match sync_mailbox_headers(&mut session, &mailbox.path).await {
+        match sync_mailbox_headers(session, &mailbox.path).await {
             Ok((uid_validity, mut snapshot)) => {
                 mailbox.uid_validity = uid_validity;
                 messages.append(&mut snapshot);
@@ -188,7 +212,6 @@ pub async fn sync_mailboxes(input: MailConnectionInput) -> Result<InboxSnapshot,
         }
     }
 
-    let _ = session.logout().await;
     Ok(InboxSnapshot {
         mailboxes,
         messages,
@@ -196,7 +219,7 @@ pub async fn sync_mailboxes(input: MailConnectionInput) -> Result<InboxSnapshot,
 }
 
 async fn sync_mailbox_headers(
-    session: &mut async_imap::Session<async_native_tls::TlsStream<TcpStream>>,
+    session: &mut ImapSession,
     mailbox_path: &str,
 ) -> Result<(Option<u32>, Vec<MessageSnapshot>), String> {
     let selected =
@@ -226,16 +249,20 @@ async fn sync_mailbox_headers(
 }
 
 pub async fn fetch_message_text(
+    pool: &ImapSessionPool,
+    account_id: i64,
     input: MailConnectionInput,
     mailbox_path: &str,
     uid: u32,
 ) -> Result<MessageBody, String> {
-    let source = fetch_message_source(input, mailbox_path, uid).await?;
+    let source = fetch_message_source(pool, account_id, input, mailbox_path, uid).await?;
     let body = parse_message(&source)?;
     Ok(body)
 }
 
 pub async fn save_attachment(
+    pool: &ImapSessionPool,
+    account_id: i64,
     input: MailConnectionInput,
     mailbox_path: &str,
     uid: u32,
@@ -246,7 +273,7 @@ pub async fn save_attachment(
         return Err("Choose a valid file location.".to_string());
     }
 
-    let source = fetch_message_source(input, mailbox_path, uid).await?;
+    let source = fetch_message_source(pool, account_id, input, mailbox_path, uid).await?;
     let parsed = parse_mail(&source).map_err(|_| "Unable to parse the message.".to_string())?;
     let content = attachment_content(&parsed, attachment_position)
         .ok_or_else(|| "Attachment is unavailable.".to_string())?;
@@ -294,6 +321,8 @@ pub async fn send_outgoing_message(
 }
 
 async fn fetch_message_source(
+    pool: &ImapSessionPool,
+    account_id: i64,
     input: MailConnectionInput,
     mailbox_path: &str,
     uid: u32,
@@ -303,7 +332,28 @@ async fn fetch_message_source(
         return Err("Mailbox path is required.".to_string());
     }
 
-    let mut session = connect_session(&input).await?;
+    let mut guard = pool.checkout(account_id).await;
+    if let Some(session) = guard.as_mut() {
+        if let Ok(source) = fetch_source_via_session(session, mailbox_path, uid).await {
+            return Ok(source);
+        }
+    }
+    *guard = Some(connect_session(&input).await?);
+    let session = guard.as_mut().expect("session was just connected");
+    match fetch_source_via_session(session, mailbox_path, uid).await {
+        Ok(source) => Ok(source),
+        Err(error) => {
+            *guard = None;
+            Err(error)
+        }
+    }
+}
+
+async fn fetch_source_via_session(
+    session: &mut ImapSession,
+    mailbox_path: &str,
+    uid: u32,
+) -> Result<Vec<u8>, String> {
     within_timeout(session.select(mailbox_path), "Unable to open the mailbox.").await?;
     let message_size = within_timeout(
         session.uid_fetch(uid.to_string(), "(RFC822.SIZE)"),
@@ -332,8 +382,6 @@ async fn fetch_message_source(
     ensure_message_source_size(
         u64::try_from(source.len()).map_err(|_| "Message is too large to download.".to_string())?,
     )?;
-
-    let _ = session.logout().await;
     Ok(source)
 }
 
@@ -355,7 +403,7 @@ async fn test_imap(input: &MailConnectionInput) -> Result<Vec<String>, String> {
     Ok(mailboxes)
 }
 
-async fn connect_session(
+pub(crate) async fn connect_session(
     input: &MailConnectionInput,
 ) -> Result<async_imap::Session<async_native_tls::TlsStream<TcpStream>>, String> {
     let stream = within_timeout(
@@ -649,31 +697,34 @@ fn is_valid_host(host: &str) -> bool {
 
 
 pub async fn mark_message_read(
+    pool: &ImapSessionPool,
+    account_id: i64,
     input: MailConnectionInput,
     mailbox_path: &str,
     uid: u32,
 ) -> Result<(), String> {
-    let mut session = connect_session(&input).await?;
-    session
-        .select(mailbox_path)
-        .await
-        .map_err(|e| imap_failure_code(&e.to_string()).to_string())?;
-
-    let mut stream = session
-        .uid_store(format!("{}", uid), "+FLAGS (\\Seen)")
-        .await
-        .map_err(|e| imap_failure_code(&e.to_string()).to_string())?;
-    use futures_util::stream::StreamExt;
-    while let Some(res) = stream.next().await {
-        let _ = res.map_err(|e| imap_failure_code(&e.to_string()).to_string())?;
+    let input = validate_input(input)?;
+    let mut guard = pool.checkout(account_id).await;
+    let uid = uid.to_string();
+    if let Some(session) = guard.as_mut() {
+        if store_seen_flag(session, mailbox_path, uid.clone()).await.is_ok() {
+            return Ok(());
+        }
     }
-    drop(stream);
-
-    session.logout().await.map_err(|e| imap_failure_code(&e.to_string()).to_string())?;
-    Ok(())
+    *guard = Some(connect_session(&input).await?);
+    let session = guard.as_mut().expect("session was just connected");
+    match store_seen_flag(session, mailbox_path, uid).await {
+        Ok(()) => Ok(()),
+        Err(error) => {
+            *guard = None;
+            Err(error)
+        }
+    }
 }
 
 pub async fn mark_messages_read_bulk(
+    pool: &ImapSessionPool,
+    account_id: i64,
     input: MailConnectionInput,
     mailbox_path: &str,
     uids: &[u32],
@@ -681,24 +732,39 @@ pub async fn mark_messages_read_bulk(
     if uids.is_empty() {
         return Ok(());
     }
-    let mut session = connect_session(&input).await?;
-    session
-        .select(mailbox_path)
-        .await
-        .map_err(|e| imap_failure_code(&e.to_string()).to_string())?;
-
+    let input = validate_input(input)?;
     let uid_set = uids.iter().map(|u| u.to_string()).collect::<Vec<_>>().join(",");
+    let mut guard = pool.checkout(account_id).await;
+    if let Some(session) = guard.as_mut() {
+        if store_seen_flag(session, mailbox_path, uid_set.clone()).await.is_ok() {
+            return Ok(());
+        }
+    }
+    *guard = Some(connect_session(&input).await?);
+    let session = guard.as_mut().expect("session was just connected");
+    match store_seen_flag(session, mailbox_path, uid_set).await {
+        Ok(()) => Ok(()),
+        Err(error) => {
+            *guard = None;
+            Err(error)
+        }
+    }
+}
+
+async fn store_seen_flag(
+    session: &mut ImapSession,
+    mailbox_path: &str,
+    uid_set: String,
+) -> Result<(), String> {
+    within_timeout(session.select(mailbox_path), "Unable to open the mailbox.").await?;
     let mut stream = session
         .uid_store(uid_set, r"+FLAGS (\Seen)")
         .await
-        .map_err(|e| imap_failure_code(&e.to_string()).to_string())?;
+        .map_err(|e| e.to_string())?;
     use futures_util::stream::StreamExt;
     while let Some(res) = stream.next().await {
-        let _ = res.map_err(|e| imap_failure_code(&e.to_string()).to_string())?;
+        res.map_err(|e| e.to_string())?;
     }
-    drop(stream);
-
-    session.logout().await.map_err(|e| imap_failure_code(&e.to_string()).to_string())?;
     Ok(())
 }
 
@@ -706,8 +772,8 @@ pub async fn mark_messages_read_bulk(
 #[cfg(test)]
 mod tests {
     use super::{
-        attachment_content, build_outgoing_message, ensure_message_source_size, parse_message,
-        validate_input, MailConnectionInput, OutgoingMessageInput, XOAuth2,
+        attachment_content, build_outgoing_message, decode_header, ensure_message_source_size,
+        parse_message, validate_input, MailConnectionInput, OutgoingMessageInput, XOAuth2,
         MESSAGE_SOURCE_BYTE_LIMIT,
     };
     use async_imap::Authenticator;
@@ -796,5 +862,10 @@ mod tests {
     fn rejects_message_sources_over_the_download_limit() {
         assert!(ensure_message_source_size(MESSAGE_SOURCE_BYTE_LIMIT).is_ok());
         assert!(ensure_message_source_size(MESSAGE_SOURCE_BYTE_LIMIT + 1).is_err());
+    }
+
+    #[test]
+    fn decodes_mime_encoded_header() {
+        assert_eq!(decode_header(b"=?UTF-8?B?0J/RgNC40LLQtdGC?="), "Привет");
     }
 }

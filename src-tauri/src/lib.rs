@@ -1,9 +1,12 @@
 mod google_oauth;
+mod imap_pool;
 mod mail;
 mod storage;
 
+use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
 
+use imap_pool::ImapSessionPool;
 use keyring::Entry;
 use mail::{
     fetch_message_text, save_attachment, send_outgoing_message, sync_mailboxes, test_connection,
@@ -22,6 +25,7 @@ use tauri::{
 
 struct AppState {
     database: Database,
+    imap_pool: ImapSessionPool,
 }
 
 struct WindowSettings {
@@ -34,7 +38,6 @@ const CREDENTIAL_SERVICE: &str = "com.rmail.desktop";
 #[serde(rename_all = "camelCase")]
 struct SyncAccountInput {
     account_id: i64,
-    password: String,
 }
 
 #[derive(Serialize)]
@@ -57,7 +60,6 @@ struct LoadMessageBodyInput {
     account_id: i64,
     mailbox_path: String,
     uid: u32,
-    password: String,
 }
 
 #[derive(Deserialize)]
@@ -67,7 +69,6 @@ struct SaveAttachmentInput {
     mailbox_path: String,
     uid: u32,
     attachment_position: usize,
-    password: String,
     destination: std::path::PathBuf,
 }
 
@@ -75,18 +76,39 @@ struct SaveAttachmentInput {
 #[serde(rename_all = "camelCase")]
 struct SendMessageInput {
     account_id: i64,
-    password: String,
     message: OutgoingMessageInput,
 }
 
-async fn mail_connection(
-    account: &Account,
-    password: String,
-) -> Result<MailConnectionInput, String> {
-    let oauth_access_token = if account.auth_type == "gmail_oauth" {
-        Some(google_oauth::access_token(&account.email).await?)
+/// Reads the account's IMAP/SMTP password from the OS keyring. `save_credentials`
+/// always writes the same value to both the `imapPassword` and `smtpPassword`
+/// entries, so either one reflects the account's current password.
+fn stored_password(account_id: i64) -> Result<String, String> {
+    let entry = Entry::new(
+        CREDENTIAL_SERVICE,
+        &format!("account:{}:imapPassword", account_id),
+    )
+    .map_err(|error| error.to_string())?;
+    match entry.get_password() {
+        Ok(password) => Ok(password),
+        Err(keyring::Error::NoEntry) => Err(
+            "Stored credentials were not found. Re-enter the account password in Settings."
+                .to_string(),
+        ),
+        Err(error) => Err(error.to_string()),
+    }
+}
+
+/// Builds mail server connection details for an account, resolving its secret
+/// (OAuth token or stored password) on the backend instead of accepting it
+/// from the frontend.
+async fn mail_connection(account: &Account) -> Result<MailConnectionInput, String> {
+    let (password, oauth_access_token) = if account.auth_type == "gmail_oauth" {
+        (
+            String::new(),
+            Some(google_oauth::access_token(&account.email).await?),
+        )
     } else {
-        None
+        (stored_password(account.id)?, None)
     };
     Ok(MailConnectionInput {
         imap_host: account.imap_host.clone(),
@@ -104,63 +126,90 @@ async fn mail_connection(
 #[serde(rename_all = "camelCase")]
 struct MarkMessageReadInput {
     account_id: i64,
-    password: String,
     mailbox_path: String,
     uid: u32,
 }
 
 #[tauri::command]
-fn mark_message_read(
+async fn mark_message_read(
     input: MarkMessageReadInput,
     state: tauri::State<'_, AppState>,
 ) -> Result<(), String> {
     let account = state.database.get_account(input.account_id)?;
     state.database.mark_message_read(account.id, &input.mailbox_path, input.uid)?;
 
-    tauri::async_runtime::spawn(async move {
-        if let Ok(connection) = mail_connection(&account, input.password).await {
-            let _ = crate::mail::mark_message_read(connection, &input.mailbox_path, input.uid).await;
-        }
-    });
+    let connection = mail_connection(&account).await?;
+    if let Err(error) = crate::mail::mark_message_read(
+        &state.imap_pool,
+        account.id,
+        connection,
+        &input.mailbox_path,
+        input.uid,
+    )
+    .await
+    {
+        tauri_plugin_log::log::error!(
+            "mark_message_read remote sync failed for account {}: {}",
+            input.account_id,
+            error
+        );
+        return Err(error);
+    }
 
     Ok(())
 }
-
-
-use std::collections::HashMap;
 
 #[derive(serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct MarkMultipleMessagesReadInput {
     account_id: i64,
-    password: String,
     mailbox_path: String,
     uid: u32,
 }
 
 #[tauri::command]
-fn mark_multiple_messages_read(
+async fn mark_multiple_messages_read(
     messages: Vec<MarkMultipleMessagesReadInput>,
     state: tauri::State<'_, AppState>,
 ) -> Result<(), String> {
-    // Group by (account_id, password, mailbox_path)
-    let mut groups: HashMap<(i64, String, String), Vec<u32>> = HashMap::new();
+    // Group by (account_id, mailbox_path)
+    let mut groups: HashMap<(i64, String), Vec<u32>> = HashMap::new();
     for msg in messages {
-        groups.entry((msg.account_id, msg.password, msg.mailbox_path)).or_default().push(msg.uid);
+        groups.entry((msg.account_id, msg.mailbox_path)).or_default().push(msg.uid);
     }
 
-    for ((account_id, password, mailbox_path), uids) in groups {
+    let mut sync_errors = Vec::new();
+    for ((account_id, mailbox_path), uids) in groups {
         let account = state.database.get_account(account_id)?;
         state.database.mark_messages_read_bulk(account_id, &mailbox_path, &uids)?;
 
-        tauri::async_runtime::spawn(async move {
-            if let Ok(connection) = mail_connection(&account, password).await {
-                let _ = crate::mail::mark_messages_read_bulk(connection, &mailbox_path, &uids).await;
+        let connection = match mail_connection(&account).await {
+            Ok(connection) => connection,
+            Err(error) => {
+                sync_errors.push(format!("account {account_id}: {error}"));
+                continue;
             }
-        });
+        };
+        if let Err(error) = crate::mail::mark_messages_read_bulk(
+            &state.imap_pool,
+            account_id,
+            connection,
+            &mailbox_path,
+            &uids,
+        )
+        .await
+        {
+            sync_errors.push(format!("account {account_id}: {error}"));
+        }
     }
 
-    Ok(())
+    if sync_errors.is_empty() {
+        Ok(())
+    } else {
+        let message = sync_errors.join("; ");
+        tauri_plugin_log::log::error!("mark_multiple_messages_read remote sync failed: {message}");
+        Err(message)
+    }
 }
 
 #[tauri::command]
@@ -182,7 +231,11 @@ fn list_accounts(state: tauri::State<'_, AppState>) -> Result<Vec<Account>, Stri
 }
 
 #[tauri::command]
-fn save_credentials(account_id: i64, password: String) -> Result<(), String> {
+async fn save_credentials(
+    account_id: i64,
+    password: String,
+    state: tauri::State<'_, AppState>,
+) -> Result<(), String> {
     let imap_entry = Entry::new(
         CREDENTIAL_SERVICE,
         &format!("account:{}:imapPassword", account_id),
@@ -201,6 +254,8 @@ fn save_credentials(account_id: i64, password: String) -> Result<(), String> {
         .set_password(&password)
         .map_err(|error| error.to_string())?;
 
+    // The cached IMAP session (if any) was authenticated with the old password.
+    state.imap_pool.evict(account_id).await;
     Ok(())
 }
 
@@ -251,11 +306,14 @@ fn create_account(
 }
 
 #[tauri::command]
-fn update_account(
+async fn update_account(
     input: UpdateAccountInput,
     state: tauri::State<'_, AppState>,
 ) -> Result<Account, String> {
-    state.database.update_account(input)
+    let account = state.database.update_account(input)?;
+    // Connection settings may have changed; drop any cached session for this account.
+    state.imap_pool.evict(account.id).await;
+    Ok(account)
 }
 
 #[tauri::command]
@@ -291,17 +349,19 @@ async fn reconnect_gmail(
         ));
     }
     google_oauth::store_refresh_token(&account.email, &authorization.refresh_token)?;
+    state.imap_pool.evict(account_id).await;
     Ok(account)
 }
 
 #[tauri::command]
-fn delete_account(account_id: i64, state: tauri::State<'_, AppState>) -> Result<(), String> {
+async fn delete_account(account_id: i64, state: tauri::State<'_, AppState>) -> Result<(), String> {
     let account = state.database.get_account(account_id)?;
     if account.auth_type == "gmail_oauth" {
         google_oauth::delete_refresh_token(&account.email)?;
     } else {
         let _ = delete_credentials(account_id);
     }
+    state.imap_pool.evict(account_id).await;
     state.database.delete_account(account_id)
 }
 
@@ -352,8 +412,15 @@ async fn load_message_body(
     }
 
     let account = state.database.get_account(input.account_id)?;
-    let connection = mail_connection(&account, input.password).await?;
-    let body = fetch_message_text(connection, &input.mailbox_path, input.uid).await?;
+    let connection = mail_connection(&account).await?;
+    let body = fetch_message_text(
+        &state.imap_pool,
+        input.account_id,
+        connection,
+        &input.mailbox_path,
+        input.uid,
+    )
+    .await?;
     state
         .database
         .store_message_body(input.account_id, &input.mailbox_path, input.uid, &body)?;
@@ -367,8 +434,10 @@ async fn save_message_attachment(
     state: tauri::State<'_, AppState>,
 ) -> Result<u64, String> {
     let account = state.database.get_account(input.account_id)?;
-    let connection = mail_connection(&account, input.password).await?;
+    let connection = mail_connection(&account).await?;
     save_attachment(
+        &state.imap_pool,
+        input.account_id,
         connection,
         &input.mailbox_path,
         input.uid,
@@ -385,7 +454,7 @@ async fn send_message(
 ) -> Result<(), String> {
     tauri_plugin_log::log::info!("send_message started for account {}", input.account_id);
     let account = state.database.get_account(input.account_id)?;
-    let connection = match mail_connection(&account, input.password).await {
+    let connection = match mail_connection(&account).await {
         Ok(c) => c,
         Err(e) => {
             tauri_plugin_log::log::error!("send_message connection failed for account {}: {}", input.account_id, e);
@@ -417,15 +486,15 @@ async fn sync_account(
 ) -> Result<SyncAccountStatus, String> {
     tauri_plugin_log::log::info!("sync_account started for account {}", input.account_id);
     let account = state.database.get_account(input.account_id)?;
-    let connection = match mail_connection(&account, input.password).await {
+    let connection = match mail_connection(&account).await {
         Ok(c) => c,
         Err(e) => {
             tauri_plugin_log::log::error!("sync_account connection failed for account {}: {}", input.account_id, e);
             return Err(e);
         }
     };
-    
-    let snapshot = match sync_mailboxes(connection).await {
+
+    let snapshot = match sync_mailboxes(&state.imap_pool, account.id, connection).await {
         Ok(s) => s,
         Err(e) => {
             tauri_plugin_log::log::error!("sync_account sync_mailboxes failed for account {}: {}", input.account_id, e);
@@ -545,7 +614,10 @@ pub fn run() {
                     }
                 })
                 .build(app)?;
-            app.manage(AppState { database });
+            app.manage(AppState {
+                database,
+                imap_pool: ImapSessionPool::new(),
+            });
             app.manage(WindowSettings {
                 hide_on_close: AtomicBool::new(true),
             });

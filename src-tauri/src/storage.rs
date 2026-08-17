@@ -641,7 +641,7 @@ impl Database {
     ) -> Result<(), String> {
         self.connection
             .lock()
-            .unwrap()
+            .map_err(|error| error.to_string())?
             .execute(
                 "UPDATE messages SET is_read = 1 WHERE account_id = ?1 AND mailbox_path = ?2 AND uid = ?3",
                 rusqlite::params![account_id, mailbox_path, uid],
