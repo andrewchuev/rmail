@@ -149,8 +149,8 @@ fn imap_failure_code(message: &str) -> &'static str {
         "Unable to establish a secure IMAP connection." => "tls_failed",
         "IMAP server did not respond." => "timeout",
         "IMAP server closed the connection." => "connection_closed",
-        "Unable to authenticate with IMAP." => "authentication_failed",
         "Unable to list IMAP mailboxes." => "mailbox_access_failed",
+        _ if message.starts_with("Unable to authenticate with IMAP") => "authentication_failed",
         _ => "unknown",
     }
 }
@@ -432,12 +432,12 @@ pub(crate) async fn connect_session(
                 },
             )
             .await
-            .map_err(|_| "Unable to authenticate with IMAP.".to_string())
+            .map_err(|(error, _)| format!("Unable to authenticate with IMAP: {error}"))
     } else {
         client
             .login(&input.username, &input.password)
             .await
-            .map_err(|_| "Unable to authenticate with IMAP.".to_string())
+            .map_err(|(error, _)| format!("Unable to authenticate with IMAP: {error}"))
     }
 }
 
