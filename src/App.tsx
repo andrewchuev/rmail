@@ -5,7 +5,6 @@ import { isPermissionGranted, requestPermission, sendNotification } from "@tauri
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
-import { invoke } from "@tauri-apps/api/core";
 import { Button } from "@/components/ui/button";
 import { AccountSetup } from "@/components/AccountSetup";
 import { SettingsPage } from "@/components/SettingsPage";
@@ -29,19 +28,20 @@ import {
   listCachedMessages,
   listUnifiedInbox,
   loadMessageBody,
+  markMessageRead,
+  markMultipleMessagesRead,
   saveMessageAttachment,
   saveDraft,
   sendMessage,
+  setTrayUnreadState,
   syncAccount,
   type Account,
   type CachedMailbox,
   type CachedMessage,
   type Draft,
+  type MarkMessageReadInput,
   type MessageBody,
 } from "@/lib/accounts";
-import {
-  readCredential,
-} from "@/lib/credentials";
 import { applyWindowSettings, loadBackgroundSettings, saveBackgroundSettings, type BackgroundSettings } from "@/lib/settings";
 import "./App.css";
 import { folderLabel, attachmentFileName, messageKey, cachedMessagesEqual, cachedMailboxesEqual } from "@/lib/utils";
@@ -123,7 +123,7 @@ function App() {
             if (!msg.isRead) unreadCount++;
         }
       }
-      invoke('set_tray_unread_state', { hasUnread: unreadCount > 0 }).catch(console.error);
+      setTrayUnreadState(unreadCount > 0).catch(console.error);
     }).catch(console.error);
   }, [syncRevision, cachedMessages]);
   const [messageBody, setMessageBody] = useState<MessageBody | null>(null);
@@ -159,17 +159,6 @@ function App() {
   const selectedMessage = cachedMessages.find(
     (message) => messageKey(message) === selectedMessageKey,
   ) ?? null;
-
-  async function accountCredential(account: Account, name: "imapPassword" | "smtpPassword") {
-    if (account.authType === "gmail_oauth") {
-      return "";
-    }
-    const password = await readCredential(account.id, name);
-    if (!password) {
-      throw new Error("Credentials were not found.");
-    }
-    return password;
-  }
 
   useEffect(() => {
     let ignore = false;
@@ -251,7 +240,7 @@ function App() {
       unlisten = listener;
     });
     return () => unlisten?.();
-  }, [accounts]);
+  }, [accounts, backgroundSettings]);
 
   useEffect(() => {
     if (activeAccountId === null) {
@@ -331,8 +320,7 @@ function App() {
     setBodyError(null);
     setContentMode("text");
     setAttachmentMessage(null);
-    void accountCredential(account, "imapPassword")
-      .then((password) => loadMessageBody(account.id, message.mailboxPath, message.uid, password))
+    void loadMessageBody(account.id, message.mailboxPath, message.uid)
       .then((body) => {
         if (!ignore) {
           setMessageBody(body);
@@ -382,21 +370,21 @@ function App() {
           setActiveFolder("INBOX");
           setAddingAccount(false);
           try {
-            const status = await syncAccount(account.id, "");
+            const status = await syncAccount(account.id);
             setSyncMessage(`Synchronized: ${status.mailboxCount} mailboxes, ${status.messageCount} messages`);
             setSyncRevision((current) => current + 1);
           } catch (reason) {
             setSyncMessage(reason instanceof Error ? reason.message : String(reason || "Gmail was connected, but the initial synchronization failed"));
           }
         }}
-        onAccountCreated={async (account, password) => {
+        onAccountCreated={async (account) => {
           setAccounts((current) => [...(current ?? []), account]);
           setActiveAccountId(account.id);
           setActiveFolder("INBOX");
           setAddingAccount(false);
 
           try {
-            const status = await syncAccount(account.id, password);
+            const status = await syncAccount(account.id);
             setSyncMessage(`Synchronized: ${status.mailboxCount} mailboxes, ${status.messageCount} messages`);
             setSyncRevision((current) => current + 1);
           } catch {
@@ -424,8 +412,7 @@ function App() {
 
     setSavingAttachmentPosition(position);
     try {
-      const password = await accountCredential(account, "imapPassword");
-      await saveMessageAttachment(account.id, message.mailboxPath, message.uid, position, password, destination);
+      await saveMessageAttachment(account.id, message.mailboxPath, message.uid, position, destination);
       setAttachmentMessage(`Attachment “${name}” was saved.`);
     } catch (reason) {
       setAttachmentMessage(reason instanceof Error ? reason.message : "Unable to save the attachment.");
@@ -478,8 +465,7 @@ function App() {
     setSending(true);
     try {
       const draft = await saveComposeDraft();
-      const password = await accountCredential(account, "smtpPassword");
-      await sendMessage(account.id, password, compose);
+      await sendMessage(account.id, compose);
       await deleteDraft(draft.id);
       setComposeOpen(false);
       setCompose(emptyCompose);
@@ -500,10 +486,7 @@ function App() {
     syncInProgress.current = true;
     if (!isBackground) setSyncing(true);
     try {
-      const results = await Promise.allSettled(accountList.map(async (account) => {
-        const password = await accountCredential(account, "imapPassword");
-        return syncAccount(account.id, password);
-      }));
+      const results = await Promise.allSettled(accountList.map((account) => syncAccount(account.id)));
       const successful = results.filter((result) => result.status === "fulfilled");
       const messageCount = successful.reduce(
         (count, result) => count + result.value.messageCount,
@@ -561,24 +544,13 @@ function App() {
       })
     );
 
-    // We must resolve credentials first
-    Promise.all(
-      unreadMessages.map(async (message) => {
-        const account = accounts?.find((a) => a.id === message.accountId);
-        if (!account) return null;
-        const password = await accountCredential(account, "imapPassword");
-        return {
-          accountId: message.accountId,
-          password,
-          mailboxPath: message.mailboxPath,
-          uid: message.uid,
-        };
-      })
-    ).then((resolvedPayload) => {
-      const validPayload = resolvedPayload.filter((p) => p !== null);
-      if (validPayload.length > 0) {
-        invoke("mark_multiple_messages_read", { messages: validPayload }).catch(console.error);
-      }
+    const payload: MarkMessageReadInput[] = unreadMessages.map((message) => ({
+      accountId: message.accountId,
+      mailboxPath: message.mailboxPath,
+      uid: message.uid,
+    }));
+    markMultipleMessagesRead(payload).catch((reason) => {
+      console.error("Unable to mark all messages as read:", reason);
     });
   };
 
@@ -596,21 +568,11 @@ function App() {
                             setCachedMessages((current) =>
                               current.map((m) => (messageKey(m) === messageKey(message) ? { ...m, isRead: true } : m))
                             );
-                            const account = accounts?.find((a) => a.id === message.accountId);
-                            if (account) {
-                              accountCredential(account, "imapPassword")
-                                .then((password) => {
-                                  invoke("mark_message_read", {
-                                    input: {
-                                      accountId: message.accountId,
-                                      password,
-                                      mailboxPath: message.mailboxPath,
-                                      uid: message.uid,
-                                    }
-                                  }).catch(console.error);
-                                })
-                                .catch(console.error);
-                            }
+                            markMessageRead({
+                              accountId: message.accountId,
+                              mailboxPath: message.mailboxPath,
+                              uid: message.uid,
+                            }).catch(console.error);
                           }
                           setSelectedMessageKey(messageKey(message));
                           setContentMode("text");

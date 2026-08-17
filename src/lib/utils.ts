@@ -1,5 +1,6 @@
 import { clsx, type ClassValue } from "clsx"
 import { twMerge } from "tailwind-merge"
+import type { CachedMailbox, CachedMessage } from "@/lib/accounts"
 
 export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs))
@@ -36,7 +37,7 @@ export function messageKey(message: { accountId: number; mailboxPath: string; ui
   return `${message.accountId}:${message.mailboxPath}:${message.uid}`;
 }
 
-export function cachedMessagesEqual(left: any[], right: any[]) {
+export function cachedMessagesEqual(left: CachedMessage[], right: CachedMessage[]) {
   return left.length === right.length && left.every((message, index) => {
     const candidate = right[index];
     if (!candidate) return false;
@@ -50,7 +51,7 @@ export function cachedMessagesEqual(left: any[], right: any[]) {
   });
 }
 
-export function cachedMailboxesEqual(left: any[], right: any[]) {
+export function cachedMailboxesEqual(left: CachedMailbox[], right: CachedMailbox[]) {
   return left.length === right.length && left.every((mailbox, index) => {
     const candidate = right[index];
     if (!candidate) return false;

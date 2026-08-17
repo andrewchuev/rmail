@@ -96,11 +96,10 @@ export async function saveMessageAttachment(
   mailboxPath: string,
   uid: number,
   attachmentPosition: number,
-  password: string,
   destination: string,
 ): Promise<number> {
   return invoke<number>("save_message_attachment", {
-    input: { accountId, mailboxPath, uid, attachmentPosition, password, destination },
+    input: { accountId, mailboxPath, uid, attachmentPosition, destination },
   });
 }
 
@@ -122,10 +121,9 @@ export async function deleteDraft(draftId: number): Promise<void> {
 
 export async function sendMessage(
   accountId: number,
-  password: string,
   message: OutgoingMessageInput,
 ): Promise<void> {
-  return invoke<void>("send_message", { input: { accountId, password, message } });
+  return invoke<void>("send_message", { input: { accountId, message } });
 }
 
 export async function deleteAccount(accountId: number): Promise<void> {
@@ -144,9 +142,9 @@ export async function testMailConnection(input: MailConnectionInput): Promise<Ma
   return invoke<MailConnectionStatus>("test_mail_connection", { input });
 }
 
-export async function syncAccount(accountId: number, password: string): Promise<SyncAccountStatus> {
+export async function syncAccount(accountId: number): Promise<SyncAccountStatus> {
   return invoke<SyncAccountStatus>("sync_account", {
-    input: { accountId, password },
+    input: { accountId },
   });
 }
 
@@ -187,9 +185,26 @@ export async function loadMessageBody(
   accountId: number,
   mailboxPath: string,
   uid: number,
-  password: string,
 ): Promise<MessageBody> {
   return invoke<MessageBody>("load_message_body", {
-    input: { accountId, mailboxPath, uid, password },
+    input: { accountId, mailboxPath, uid },
   });
+}
+
+export type MarkMessageReadInput = {
+  accountId: number;
+  mailboxPath: string;
+  uid: number;
+};
+
+export async function markMessageRead(input: MarkMessageReadInput): Promise<void> {
+  return invoke<void>("mark_message_read", { input });
+}
+
+export async function markMultipleMessagesRead(messages: MarkMessageReadInput[]): Promise<void> {
+  return invoke<void>("mark_multiple_messages_read", { messages });
+}
+
+export async function setTrayUnreadState(hasUnread: boolean): Promise<void> {
+  return invoke<void>("set_tray_unread_state", { hasUnread });
 }

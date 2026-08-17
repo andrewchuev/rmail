@@ -22,7 +22,7 @@ export function AccountSetup({
   onGmailConnected,
 }: {
   isAdditional?: boolean;
-  onAccountCreated: (account: Account, password: string) => Promise<void>;
+  onAccountCreated: (account: Account) => Promise<void>;
   onCancel?: () => void;
   onGmailConnected: (account: Account) => Promise<void>;
 }) {
@@ -107,7 +107,7 @@ export function AccountSetup({
         throw new Error("Unable to save credentials. The account was not added.");
       }
 
-      await onAccountCreated(account, connectionPassword);
+      await onAccountCreated(account);
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "Unable to save the account.");
     } finally {
