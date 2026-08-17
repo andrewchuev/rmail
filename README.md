@@ -17,12 +17,19 @@ RMail is a lightweight desktop email client built with Rust, Tauri 2, React, and
 
 ## Architecture & Refactoring
 
-The codebase has undergone a refactoring process to adhere strictly to Rust and TypeScript best practices. The Rust backend logic has standardized English docstrings and is verified against `cargo clippy` to ensure optimal performance and code health. Critical panics (like safely unpacking the window icon) have also been resolved. On the frontend side, utility functions were extracted from `App.tsx` into `src/lib/utils.ts` to improve maintainability, and all dependencies have been updated to their latest compatible versions.
+The codebase is verified against `cargo clippy` and `oxlint`/`tsc` to keep it aligned with current Rust and TypeScript best practices. Mark-as-read now awaits the remote IMAP update instead of firing it in the background and discarding the result, so sync failures surface as real errors instead of silently diverging the local cache from the server. IMAP-command error messages are propagated as-is rather than collapsed to `"unknown"`. All Tauri commands invoked from the frontend go through typed wrappers in `src/lib/accounts.ts` (no ad-hoc untyped `invoke()` calls), and every cache-comparison helper in `src/lib/utils.ts` is fully typed. Unused/duplicated code (a stray debug binary, an abandoned account-setup draft, and orphaned message-list/viewer components) has been removed rather than left to rot.
+
 ## Security
 
 Passwords and Gmail refresh tokens are stored in the operating system credential store using native keychains. Passwords, tokens, email addresses, and message contents are excluded from diagnostic logs.
 
+The frontend never handles account passwords. Every Tauri command that talks to IMAP/SMTP takes only an `accountId`; the Rust backend resolves the stored password (or a fresh OAuth token) from the OS keyring itself, so a plaintext secret never crosses the webview↔Rust IPC boundary.
+
 OAuth uses a random loopback callback on `127.0.0.1`, validates `state`, and uses PKCE. Google Desktop client credentials are supplied at build time through the ignored `.env` file. Changing an account identity clears its cached server data to prevent messages from different mailboxes from being mixed.
+
+## Performance
+
+IMAP connections are pooled per account (`src-tauri/src/imap_pool.rs`): opening a message, marking it read, and syncing reuse one cached, logged-in session instead of paying a fresh TCP+TLS+LOGIN round trip for every action. A session is transparently dropped and reconnected once if a cached connection turns out to be dead (e.g. the server closed it after being idle), and it's evicted outright when an account's credentials or connection settings change.
 
 ## Development
 
