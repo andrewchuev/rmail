@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState, useTransition, type FormEvent, type ReactNode } from "react";
-import { Archive, ArrowLeft, ChevronDown, Clock3, CheckCheck, Inbox, LayoutTemplate, List, MoreHorizontal, Paperclip, PenLine, Plus, Search, Settings, Trash2 } from "lucide-react";
+import { Archive, ArrowLeft, Clock3, CheckCheck, Inbox, LayoutTemplate, List, Paperclip, PenLine, Plus, Search, Settings, Trash2 } from "lucide-react";
 import { save } from "@tauri-apps/plugin-dialog";
 import { isPermissionGranted, requestPermission, sendNotification } from "@tauri-apps/plugin-notification";
 import { listen } from "@tauri-apps/api/event";
@@ -778,7 +778,7 @@ function App() {
                         <IconButton label="Archive"><Archive /></IconButton>
                         <IconButton label="Delete"><Trash2 /></IconButton>
                         <IconButton label="Snooze"><Clock3 /></IconButton>
-                        <IconButton label="More"><MoreHorizontal /></IconButton>
+
                       </div>
                     </header>
                     {renderMessageViewer()}
@@ -795,13 +795,12 @@ function App() {
           <ResizablePanel defaultSize="19%" minSize="16%">
             <aside className="flex h-full min-w-52 flex-col border-r bg-sidebar px-3 py-4">
               <div className="flex items-center justify-between px-2">
-                <button className="flex items-center gap-2 rounded-md p-1 text-sm font-semibold" type="button">
+                <div className="flex items-center gap-2 p-1 text-sm font-semibold">
                   <span className="grid size-7 place-items-center rounded-lg bg-primary text-primary-foreground">
                     R
                   </span>
                   RMail
-                  <ChevronDown className="size-3.5 text-muted-foreground" />
-                </button>
+                </div>
                 <div className="flex gap-1">
                   <IconButton label="Settings" onClick={() => setActiveView("settings")}>
                     <Settings />
@@ -884,9 +883,7 @@ function App() {
                     <IconButton label="Compact mode" onClick={() => { setLayoutMode("compact"); setActiveAccountId(null); setSelectedMessageKey(null); }}>
                       <List />
                     </IconButton>
-                    <IconButton label="More actions">
-                      <MoreHorizontal />
-                    </IconButton>
+
                   </div>
                 </div>
                 <label className="search-field mt-4">
@@ -915,7 +912,7 @@ function App() {
                   <IconButton label="Delete"><Trash2 /></IconButton>
                   <IconButton label="Snooze"><Clock3 /></IconButton>
                 </div>
-                <IconButton label="More"><MoreHorizontal /></IconButton>
+
               </header>
 
               {renderMessageViewer()}
