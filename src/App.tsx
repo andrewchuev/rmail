@@ -1,32 +1,23 @@
 import { useEffect, useMemo, useRef, useState, useTransition, type FormEvent, type ReactNode } from "react";
-import { Archive, ArrowLeft, BellOff, ChevronRight, Clock3, CheckCheck, Inbox, LayoutTemplate, List, Paperclip, PenLine, Plus, Reply, Search, Settings, Trash2, X } from "lucide-react";
+import { Archive, ArrowLeft, Clock3, LayoutTemplate, List, Trash2 } from "lucide-react";
 import { save } from "@tauri-apps/plugin-dialog";
 import { isPermissionGranted, requestPermission, sendNotification } from "@tauri-apps/plugin-notification";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
-import { Button } from "@/components/ui/button";
 import { AccountSetup } from "@/components/AccountSetup";
 import { SettingsPage } from "@/components/SettingsPage";
-import {
-  ContextMenu,
-  ContextMenuContent,
-  ContextMenuItem,
-  ContextMenuSeparator,
-  ContextMenuTrigger,
-} from "@/components/ui/context-menu";
+import { ComposeWindow, emptyCompose, type ComposeState } from "@/components/mail/ComposeWindow";
+import { IconButton } from "@/components/mail/IconButton";
+import { MessageList, MessageListHeader } from "@/components/mail/MessageList";
+import { MessageViewer } from "@/components/mail/MessageViewer";
+import { Sidebar } from "@/components/mail/Sidebar";
 import {
   ResizableHandle,
   ResizablePanel,
   ResizablePanelGroup,
 } from "@/components/ui/resizable";
-import { ScrollArea } from "@/components/ui/scroll-area";
-import {
-  Tooltip,
-  TooltipContent,
-  TooltipProvider,
-  TooltipTrigger,
-} from "@/components/ui/tooltip";
+import { TooltipProvider } from "@/components/ui/tooltip";
 import {
   addNotificationExclusion,
   deleteDraft,
@@ -54,48 +45,7 @@ import {
 } from "@/lib/accounts";
 import { applyWindowSettings, loadBackgroundSettings, saveBackgroundSettings, type BackgroundSettings } from "@/lib/settings";
 import "./App.css";
-import { folderLabel, attachmentFileName, messageKey, cachedMessagesEqual, cachedMailboxesEqual, wrapEmailHtml } from "@/lib/utils";
-
-
-
-
-
-
-
-
-
-
-
-
-
-type ComposeState = {
-  recipients: string;
-  subject: string;
-  body: string;
-};
-
-const emptyCompose: ComposeState = { recipients: "", subject: "", body: "" };
-
-function IconButton({
-  label,
-  children,
-  onClick,
-}: {
-  label: string;
-  children: ReactNode;
-  onClick?: () => void;
-}) {
-  return (
-    <Tooltip>
-      <TooltipTrigger asChild>
-        <Button aria-label={label} onClick={onClick} size="icon" variant="ghost">
-          {children}
-        </Button>
-      </TooltipTrigger>
-      <TooltipContent>{label}</TooltipContent>
-    </Tooltip>
-  );
-}
+import { folderLabel, attachmentFileName, messageKey, cachedMessagesEqual, cachedMailboxesEqual } from "@/lib/utils";
 
 function App() {
   const [, startTransition] = useTransition();
@@ -159,48 +109,6 @@ function App() {
   const hasCompletedBackgroundSync = useRef(false);
   const knownMessageKeys = useRef<Set<string>>(new Set());
   const syncInProgress = useRef(false);
-  const htmlFrameRef = useRef<HTMLIFrameElement>(null);
-
-  // Keeps the HTML message iframe sized to fit its content so the outer pane
-  // is the only scroll container. A one-off measurement on "load" isn't
-  // enough: images without explicit width/height grow the document after
-  // load finishes, which would otherwise leave the iframe too short and
-  // produce a second, inner scrollbar. A ResizeObserver on the iframe's own
-  // document keeps the height in sync as content (images, fonts) settles.
-  useEffect(() => {
-    const frame = htmlFrameRef.current;
-    if (!frame || contentMode !== "html" || !messageBody?.html) {
-      return;
-    }
-
-    let observer: ResizeObserver | undefined;
-
-    const syncHeight = () => {
-      const root = frame.contentDocument?.documentElement;
-      if (root) {
-        frame.style.height = `${root.scrollHeight}px`;
-      }
-    };
-
-    const handleLoad = () => {
-      observer?.disconnect();
-      const root = frame.contentDocument?.documentElement;
-      if (!root) return;
-      syncHeight();
-      observer = new ResizeObserver(syncHeight);
-      observer.observe(root);
-    };
-
-    if (frame.contentDocument?.readyState === "complete") {
-      handleLoad();
-    }
-    frame.addEventListener("load", handleLoad);
-
-    return () => {
-      frame.removeEventListener("load", handleLoad);
-      observer?.disconnect();
-    };
-  }, [contentMode, messageBody?.html]);
 
   const visibleMessages = useMemo(() => {
     const normalizedQuery = query.trim().toLowerCase();
@@ -232,6 +140,34 @@ function App() {
       }
       return next;
     });
+  }
+
+  function handleToggleSelectAll(checked: boolean) {
+    setSelectedMessageKeys(checked ? new Set(visibleMessages.map(messageKey)) : new Set());
+  }
+
+  function handleToggleAccount(accountId: number, isExpanded: boolean) {
+    if (isExpanded) {
+      setActiveAccountId(null);
+    } else {
+      setActiveAccountId(accountId);
+      setActiveFolder("INBOX");
+    }
+  }
+
+  function handleSelectMessage(message: CachedMessage) {
+    const key = messageKey(message);
+    if (!message.isRead) {
+      setCachedMessages((current) =>
+        current.map((m) => (messageKey(m) === key ? { ...m, isRead: true } : m))
+      );
+      markMessageRead({
+        accountId: message.accountId,
+        mailboxPath: message.mailboxPath,
+        uid: message.uid,
+      }).catch(console.error);
+    }
+    setSelectedMessageKey(key);
   }
 
   function messageRefs(messages: CachedMessage[]): MessageRef[] {
@@ -723,7 +659,6 @@ function App() {
     );
   }
 
-  
   const handleMarkAllRead = () => {
     const unreadMessages = visibleMessages.filter((m) => !m.isRead);
     if (unreadMessages.length === 0) return;
@@ -739,240 +674,53 @@ function App() {
     });
   };
 
-  const renderMessageList = () => {
-    const allVisibleSelected = visibleMessages.length > 0 && selectedInView.length === visibleMessages.length;
+  const listPaneTitle = activeAccountId === null ? "All inboxes" : folderLabel(activeFolder);
+  const listPaneAccountName = activeAccountId !== null
+    ? accountList.find((account) => account.id === activeAccountId)?.displayName
+    : undefined;
 
-    return (
-      <ScrollArea className="min-h-0 flex-1">
-        {selectedInView.length > 0 ? (
-          <div className="sticky top-0 z-10 flex items-center gap-3 border-b bg-background/95 px-4 py-2 backdrop-blur">
-            <input
-              aria-label="Select all visible messages"
-              checked={allVisibleSelected}
-              className="size-4 accent-primary"
-              onChange={(event) => setSelectedMessageKeys(event.target.checked ? new Set(visibleMessages.map(messageKey)) : new Set())}
-              type="checkbox"
-            />
-            <span className="text-sm font-medium">{selectedInView.length} selected</span>
-            <div className="ml-auto flex gap-1">
-              <IconButton label="Mark as read" onClick={handleBulkMarkRead}>
-                <CheckCheck />
-              </IconButton>
-              <IconButton label="Delete" onClick={handleBulkDelete}>
-                <Trash2 />
-              </IconButton>
-              <IconButton label="Clear selection" onClick={() => setSelectedMessageKeys(new Set())}>
-                <X />
-              </IconButton>
-            </div>
-          </div>
-        ) : null}
-        <div className="p-2">
-                    {visibleMessages.length ? (
-                      visibleMessages.map((message) => {
-                        const key = messageKey(message);
-                        const isChecked = selectedMessageKeys.has(key);
-                        const isSenderExcluded = excludedSenderEmails.has(message.senderEmail.toLowerCase());
-                        return (
-                          <ContextMenu key={key}>
-                            <ContextMenuTrigger asChild>
-                              <div className="group/row flex items-center gap-1">
-                                <span className={`shrink-0 pl-1.5 transition-opacity ${selectedInView.length > 0 || isChecked ? "opacity-100" : "opacity-0 group-hover/row:opacity-100"}`}>
-                                  <input
-                                    aria-label={`Select message from ${message.sender}`}
-                                    checked={isChecked}
-                                    className="size-4 accent-primary"
-                                    onChange={(event) => toggleMessageSelection(key, event.target.checked)}
-                                    type="checkbox"
-                                  />
-                                </span>
-                                <button
-                                  className="message-row flex-1"
-                                  data-selected={selectedMessageKey === key}
-                                  onClick={() => {
-                                    if (!message.isRead) {
-                                      setCachedMessages((current) =>
-                                        current.map((m) => (messageKey(m) === key ? { ...m, isRead: true } : m))
-                                      );
-                                      markMessageRead({
-                                        accountId: message.accountId,
-                                        mailboxPath: message.mailboxPath,
-                                        uid: message.uid,
-                                      }).catch(console.error);
-                                    }
-                                    setSelectedMessageKey(key);
-                                  }}
-                                  type="button"
-                                >
-                                  <div className={`flex ${layoutMode === "compact" ? "items-center gap-4" : "items-start gap-3"}`}>
-                                    <span className={`size-2 shrink-0 rounded-full bg-primary opacity-0 data-[unread=true]:opacity-100 ${layoutMode === "compact" ? "" : "mt-1"}`} data-unread={!message.isRead} />
-                                    {layoutMode === "compact" ? (
-                                      <div className="min-w-0 flex-1 flex items-center gap-4 text-left">
-                                        <p className={`w-64 shrink-0 truncate text-sm ${!message.isRead ? "font-semibold text-foreground/90" : "font-normal text-foreground/70"}`}>
-                                          {message.sender}
-                                          {isSenderExcluded ? <BellOff className="ml-1.5 inline size-3 text-muted-foreground" /> : null}
-                                        </p>
-                                        <p className={`flex-1 truncate text-sm ${!message.isRead ? "font-semibold text-foreground/90" : "font-normal text-foreground/70"}`}>
-                                          {message.subject} <span className="text-muted-foreground font-normal ml-2">&middot; {message.accountDisplayName} &middot; {folderLabel(message.mailboxPath)}</span>
-                                        </p>
-                                        <time className={`shrink-0 text-xs ${!message.isRead ? "font-semibold text-foreground/90" : "text-muted-foreground"}`}>{message.date}</time>
-                                      </div>
-                                    ) : (
-                                      <div className="min-w-0 flex-1 text-left">
-                                        <div className="flex items-center gap-3">
-                                          <p className={`truncate text-sm ${!message.isRead ? "font-semibold text-foreground/90" : "font-medium text-foreground/70"}`}>
-                                            {message.sender}
-                                            {isSenderExcluded ? <BellOff className="ml-1.5 inline size-3 text-muted-foreground" /> : null}
-                                          </p>
-                                          <time className={`ml-auto text-xs ${!message.isRead ? "font-semibold text-foreground/90" : "text-muted-foreground"}`}>{message.date}</time>
-                                        </div>
-                                        <p className={`mt-1 truncate text-sm ${!message.isRead ? "font-semibold text-foreground/90" : "font-normal text-foreground/70"}`}>{message.subject}</p>
-                                        <p className="mt-1 text-xs leading-5 text-muted-foreground">{message.accountDisplayName} &middot; {folderLabel(message.mailboxPath)}</p>
-                                      </div>
-                                    )}
-                                  </div>
-                                </button>
-                              </div>
-                            </ContextMenuTrigger>
-                            <ContextMenuContent>
-                              <ContextMenuItem onSelect={() => handleReplyToMessage(message)}>
-                                <Reply /> Reply
-                              </ContextMenuItem>
-                              <ContextMenuItem
-                                disabled={isSenderExcluded}
-                                onSelect={() => void handleExcludeSenderFromNotifications(message)}
-                              >
-                                <BellOff /> {isSenderExcluded ? "Notifications already excluded" : "Exclude from notifications"}
-                              </ContextMenuItem>
-                              <ContextMenuSeparator />
-                              <ContextMenuItem onSelect={() => handleDeleteMessage(message)} variant="destructive">
-                                <Trash2 /> Delete
-                              </ContextMenuItem>
-                            </ContextMenuContent>
-                          </ContextMenu>
-                        );
-                      })
-                    ) : (
-                      <div className="grid min-h-48 place-items-center px-8 text-center text-sm text-muted-foreground">
-                        {query ? "No messages found. Try another search." : "This folder has no synchronized messages yet."}
-                      </div>
-                    )}
-                  </div>
-      </ScrollArea>
-    );
-  };
-
-  const renderMessageViewer = () => (
-    <ScrollArea className="min-h-0 flex-1">
-      {selectedMessage ? (
-        <div className="flex h-full flex-col py-9">
-          <div className="mx-auto w-full max-w-3xl px-8">
-            <div className="flex items-start gap-4">
-              <span className="grid size-10 shrink-0 place-items-center rounded-full bg-violet-100 text-sm font-semibold text-violet-700">
-                {selectedMessage.sender[0]}
-              </span>
-              <div className="min-w-0 flex-1">
-                <div className="flex items-start gap-3">
-                  <div>
-                    <h2 className="text-xl font-semibold tracking-tight">{selectedMessage.subject}</h2>
-                    <p className="mt-2 text-sm font-medium">{selectedMessage.sender}</p>
-                    <p className="text-sm text-muted-foreground">{selectedMessage.accountDisplayName} · {folderLabel(selectedMessage.mailboxPath)}</p>
-                  </div>
-                  <time className="ml-auto shrink-0 text-xs text-muted-foreground">{selectedMessage.date}</time>
-                </div>
-                {messageBody?.html ? (
-                  <div className="mt-8 flex gap-2">
-                    <Button onClick={() => setContentMode("text")} size="sm" type="button" variant={contentMode === "text" ? "secondary" : "ghost"}>Text</Button>
-                    <Button onClick={() => setContentMode("html")} size="sm" type="button" variant={contentMode === "html" ? "secondary" : "ghost"}>HTML</Button>
-                  </div>
-                ) : null}
-              </div>
-            </div>
-          </div>
-
-          {contentMode === "html" && messageBody?.html ? (
-            <div className="mt-5 px-4">
-              <iframe
-                className="w-full rounded-lg border"
-                ref={htmlFrameRef}
-                referrerPolicy="no-referrer"
-                sandbox="allow-same-origin allow-popups allow-popups-to-escape-sandbox"
-                srcDoc={wrapEmailHtml(messageBody.html)}
-                // content-box: frame.style.height below is set to match the inner
-                // document's scrollHeight exactly. Under the app's default border-box
-                // sizing, the 1px border would eat into that budget, leaving the inner
-                // document ~2px too tall for its own iframe - a persistent few-pixel
-                // inner scrollbar that isn't fixed by re-measuring (it's not a timing
-                // issue, the shortfall is deterministic).
-                style={{ minHeight: 200, boxSizing: "content-box" }}
-                title="HTML message version"
-              />
-            </div>
-          ) : (
-            <div className="mx-auto w-full max-w-3xl px-8">
-              <div className="mail-body mt-8 whitespace-pre-wrap break-words text-[0.95rem] leading-7 text-foreground/85">
-                {isBodyLoading ? "Loading message body…" : bodyError ?? messageBody?.text ?? "Message body is unavailable."}
-              </div>
-            </div>
-          )}
-
-          {messageBody?.attachments.length ? (
-            <div className="mx-auto w-full max-w-3xl px-8">
-              <div className="mt-8 space-y-3">
-                <div className="flex flex-wrap gap-2">
-                {messageBody.attachments.map((attachment) => (
-                  <Button
-                    className="attachment-chip"
-                    disabled={savingAttachmentPosition !== null}
-                    key={`${attachment.position}-${attachment.name}`}
-                    onClick={() => void downloadAttachment(attachment.position, attachment.name)}
-                    size="sm"
-                    type="button"
-                    variant="outline"
-                  >
-                    <Paperclip className="size-3.5" />
-                    {savingAttachmentPosition === attachment.position ? "Saving…" : `${attachment.name} · ${attachment.mimeType}`}
-                  </Button>
-                ))}
-                </div>
-                {attachmentMessage ? <p className="text-sm text-muted-foreground" role="status">{attachmentMessage}</p> : null}
-              </div>
-            </div>
-          ) : null}
-        </div>
-      ) : (
-        <div className="grid h-full place-items-center p-8 text-center text-sm text-muted-foreground">
-          Select a message to view it.
-        </div>
-      )}
-    </ScrollArea>
+  const renderMessageListPane = (toggleModeButton: ReactNode) => (
+    <>
+      <MessageListHeader
+        accountName={listPaneAccountName}
+        onMarkAllRead={handleMarkAllRead}
+        onQueryChange={setQuery}
+        query={query}
+        title={listPaneTitle}
+        toggleModeButton={toggleModeButton}
+      />
+      <MessageList
+        excludedSenderEmails={excludedSenderEmails}
+        layoutMode={layoutMode}
+        messages={visibleMessages}
+        onBulkDelete={handleBulkDelete}
+        onBulkMarkRead={handleBulkMarkRead}
+        onClearSelection={() => setSelectedMessageKeys(new Set())}
+        onDeleteMessage={handleDeleteMessage}
+        onExcludeSender={(message) => void handleExcludeSenderFromNotifications(message)}
+        onReply={handleReplyToMessage}
+        onSelectMessage={handleSelectMessage}
+        onToggleMessageSelection={toggleMessageSelection}
+        onToggleSelectAll={handleToggleSelectAll}
+        query={query}
+        selectedMessageKey={selectedMessageKey}
+        selectedMessageKeys={selectedMessageKeys}
+      />
+    </>
   );
 
-  const renderListHeader = (toggleModeButton: ReactNode) => (
-    <header className="border-b px-5 py-4">
-      <div className="flex items-center justify-between">
-        <div>
-          {activeAccountId !== null && (<p className="text-xs font-medium text-muted-foreground">{accountList.find((account) => account.id === activeAccountId)?.displayName}</p>)}
-          <h1 className="mt-0.5 text-lg font-semibold">{activeAccountId === null ? "All inboxes" : folderLabel(activeFolder)}</h1>
-        </div>
-        <div className="flex gap-1">
-          <IconButton label="Mark all as read" onClick={handleMarkAllRead}>
-            <CheckCheck />
-          </IconButton>
-          {toggleModeButton}
-        </div>
-      </div>
-      <label className="search-field mt-4">
-        <Search className="size-4" />
-        <span className="sr-only">Search messages</span>
-        <input
-          onChange={(event) => setQuery(event.target.value)}
-          placeholder="Search"
-          type="search"
-          value={query}
-        />
-      </label>
-    </header>
+  const renderMessageViewerPane = () => (
+    <MessageViewer
+      attachmentMessage={attachmentMessage}
+      bodyError={bodyError}
+      contentMode={contentMode}
+      isBodyLoading={isBodyLoading}
+      message={selectedMessage}
+      messageBody={messageBody}
+      onContentModeChange={setContentMode}
+      onDownloadAttachment={(position, name) => void downloadAttachment(position, name)}
+      savingAttachmentPosition={savingAttachmentPosition}
+    />
   );
 
   return (
@@ -981,90 +729,20 @@ function App() {
         <div className="flex-1 overflow-hidden">
           <ResizablePanelGroup className="min-h-svh" orientation="horizontal">
             <ResizablePanel defaultSize="19%" minSize="16%">
-              <aside className="flex h-full min-w-52 flex-col border-r bg-sidebar px-3 py-4">
-                <div className="flex items-center justify-between px-2">
-                  <div className="flex items-center gap-2 p-1 text-sm font-semibold">
-                    <span className="grid size-7 place-items-center rounded-lg bg-primary text-primary-foreground">
-                      R
-                    </span>
-                    RMail
-                  </div>
-                  <div className="flex gap-1">
-                    <IconButton label="Settings" onClick={() => setActiveView("settings")}>
-                      <Settings />
-                    </IconButton>
-                    <IconButton label="Add account" onClick={() => setAddingAccount(true)}>
-                      <Plus />
-                    </IconButton>
-                  </div>
-                </div>
-
-                <Button className="mt-6 w-full justify-start" onClick={openCompose}>
-                  <PenLine />
-                  Compose
-                </Button>
-
-                <Button className="mt-2 w-full" disabled={isSyncing} onClick={() => void syncAllAccounts()} size="sm" variant="secondary">
-                  {isSyncing ? "Synchronizing…" : "Synchronize all"}
-                </Button>
-
-                <nav aria-label="Mail folders" className="mt-6 space-y-1">
-                  <button
-                    aria-current={activeAccountId === null ? "page" : undefined}
-                    className="folder-link"
-                    data-active={activeAccountId === null}
-                    onClick={() => setActiveAccountId(null)}
-                    type="button"
-                  >
-                    <Inbox className="size-4" />
-                    <span>All inboxes</span>
-                  </button>
-                  <p className="px-2 pt-4 text-xs font-medium text-muted-foreground">Accounts</p>
-                  {accountList.map((account) => {
-                    const isExpanded = activeAccountId === account.id;
-                    return (
-                      <div key={account.id}>
-                        <button
-                          aria-expanded={isExpanded}
-                          className="folder-link"
-                          data-active={isExpanded}
-                          onClick={() => {
-                            if (isExpanded) {
-                              setActiveAccountId(null);
-                            } else {
-                              setActiveAccountId(account.id);
-                              setActiveFolder("INBOX");
-                            }
-                          }}
-                          type="button"
-                        >
-                          <ChevronRight className={`size-3.5 shrink-0 text-muted-foreground transition-transform ${isExpanded ? "rotate-90" : ""}`} />
-                          <span className="truncate">{account.displayName}</span>
-                        </button>
-                        {isExpanded ? (
-                          <div className="ml-4 mt-1 space-y-1 border-l pl-2">
-                            {mailboxes.map((mailbox) => (
-                              <button
-                                aria-current={activeFolder === mailbox.path ? "page" : undefined}
-                                className="folder-link"
-                                data-active={activeFolder === mailbox.path}
-                                key={`${account.id}:${mailbox.path}`}
-                                onClick={() => setActiveFolder(mailbox.path)}
-                                type="button"
-                              >
-                                <Inbox className="size-4" />
-                                <span>{folderLabel(mailbox.path)}</span>
-                                {mailbox.unreadCount ? <span className="ml-auto text-xs tabular-nums">{mailbox.unreadCount}</span> : null}
-                              </button>
-                            ))}
-                          </div>
-                        ) : null}
-                      </div>
-                    );
-                  })}
-                </nav>
-
-              </aside>
+              <Sidebar
+                accountList={accountList}
+                activeAccountId={activeAccountId}
+                activeFolder={activeFolder}
+                isSyncing={isSyncing}
+                mailboxes={mailboxes}
+                onAddAccount={() => setAddingAccount(true)}
+                onCompose={openCompose}
+                onOpenSettings={() => setActiveView("settings")}
+                onSelectAllInboxes={() => setActiveAccountId(null)}
+                onSelectFolder={setActiveFolder}
+                onSyncAll={() => void syncAllAccounts()}
+                onToggleAccount={handleToggleAccount}
+              />
             </ResizablePanel>
 
             <ResizableHandle />
@@ -1084,17 +762,14 @@ function App() {
                           <IconButton label="Snooze"><Clock3 /></IconButton>
                         </div>
                       </header>
-                      {renderMessageViewer()}
+                      {renderMessageViewerPane()}
                     </article>
                   ) : (
-                    <>
-                      {renderListHeader(
-                        <IconButton label="Default mode" onClick={() => setLayoutMode("default")}>
-                          <LayoutTemplate />
-                        </IconButton>,
-                      )}
-                      {renderMessageList()}
-                    </>
+                    renderMessageListPane(
+                      <IconButton label="Default mode" onClick={() => setLayoutMode("default")}>
+                        <LayoutTemplate />
+                      </IconButton>,
+                    )
                   )}
                 </section>
               </ResizablePanel>
@@ -1102,12 +777,11 @@ function App() {
               <>
                 <ResizablePanel defaultSize="34%" minSize="26%">
                   <section className="flex h-full min-w-72 flex-col border-r">
-                    {renderListHeader(
+                    {renderMessageListPane(
                       <IconButton label="Compact mode" onClick={() => setLayoutMode("compact")}>
                         <List />
                       </IconButton>,
                     )}
-                    {renderMessageList()}
                   </section>
                 </ResizablePanel>
 
@@ -1123,7 +797,7 @@ function App() {
                       </div>
                     </header>
 
-                    {renderMessageViewer()}
+                    {renderMessageViewerPane()}
                   </article>
                 </ResizablePanel>
               </>
@@ -1132,29 +806,19 @@ function App() {
         </div>
 
         {isComposeOpen ? (
-          <form aria-label="New message" className="compose-window" onSubmit={handleSendMessage}>
-            <div className="flex items-center justify-between border-b px-4 py-3">
-              <span className="text-sm font-medium">New message</span>
-              <Button onClick={() => setComposeOpen(false)} size="icon-xs" type="button" variant="ghost">×</Button>
-            </div>
-            <label className="compose-field">
-              <span>From</span>
-              <select onChange={(event) => setComposeAccountId(Number(event.target.value))} value={composeAccountId ?? ""}>
-                {accountList.map((account) => <option key={account.id} value={account.id}>{account.displayName} · {account.email}</option>)}
-              </select>
-            </label>
-            <label className="compose-field"><span>To</span><input autoFocus onChange={(event) => setCompose((current) => ({ ...current, recipients: event.target.value }))} placeholder="name@company.com, colleague@company.com" value={compose.recipients} /></label>
-            <label className="compose-field"><span>Subject</span><input onChange={(event) => setCompose((current) => ({ ...current, subject: event.target.value }))} placeholder="Subject" value={compose.subject} /></label>
-            <textarea aria-label="Message body" className="min-h-36 flex-1 resize-none p-4 outline-none" onChange={(event) => setCompose((current) => ({ ...current, body: event.target.value }))} placeholder="Write a message…" value={compose.body} />
-            {composeMessage ? <p className="px-4 text-sm text-muted-foreground" role="status">{composeMessage}</p> : null}
-            <div className="flex items-center justify-between border-t p-3">
-              <div className="flex gap-2">
-                <Button disabled={isSending} type="submit">{isSending ? "Sending…" : "Send"}</Button>
-                <Button disabled={isSavingDraft || isSending} onClick={() => void handleSaveDraft()} type="button" variant="secondary">{isSavingDraft ? "Saving…" : "Save draft"}</Button>
-              </div>
-              <span className="text-xs text-muted-foreground">No attachments</span>
-            </div>
-          </form>
+          <ComposeWindow
+            accountList={accountList}
+            compose={compose}
+            composeAccountId={composeAccountId}
+            composeMessage={composeMessage}
+            isSavingDraft={isSavingDraft}
+            isSending={isSending}
+            onClose={() => setComposeOpen(false)}
+            onComposeAccountChange={setComposeAccountId}
+            onComposeChange={(patch) => setCompose((current) => ({ ...current, ...patch }))}
+            onSaveDraft={() => void handleSaveDraft()}
+            onSubmit={handleSendMessage}
+          />
         ) : null}
 
         <footer className="flex h-7 shrink-0 items-center border-t bg-muted/50 px-3 text-xs text-muted-foreground">
