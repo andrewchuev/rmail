@@ -35,6 +35,14 @@ Two behavioral bugs were found and fixed during the latest audit:
 
 The per-sender notification exclusion list matches against the sender's raw email address, not their display name (a name a sender fully controls and that varies per message - "Digest", "Newsletter", etc.). Previously only the display name was persisted (`snapshot_message`/`format_address` discarded the address once a display name was present); `format_address` now returns both, and `messages.sender_email` (backfilled for existing rows via `ADD COLUMN ... DEFAULT ''`, populated on the next sync) is the identifier the exclusion list, the tray unread count, and the background-sync notification count all filter on.
 
+A further Rust/TypeScript best-practices pass found and fixed:
+
+- `google_oauth::access_token` refreshed the Gmail access token from Google's token endpoint on **every** IMAP/SMTP operation (every sync, mark-as-read, delete, send) instead of reusing a still-valid token, adding a needless network round trip to each action and risking Google's rate limits under heavy use. It now caches the token in-memory per account email, keyed off the `expires_in` Google returns, and only refreshes once the cached token is within 60 seconds of expiry; the cache is invalidated whenever the refresh token changes (reconnect) or is deleted (account removal, disconnect).
+- The Rust crate now targets edition 2024 (toolchain is well past its stabilization). Enabling it surfaced six `if let Some(x) = ... { if let Ok(y) = ... { ... } }` blocks across `mail.rs`/`lib.rs` that `clippy` now collapses into single `if let ... && let ...` let-chains, the idiomatic edition-2024 form.
+- `mark_multiple_messages_read` and `delete_messages` (`src-tauri/src/lib.rs`) each re-implemented the same "group message refs by (account, mailbox)" loop under a different local type. They now share one `MessageLocator` input type and one `group_by_mailbox` helper.
+- Settings search (`src/components/SettingsPage.tsx`) normalized and sorted every query - regardless of the entirely English UI - with a hardcoded `"ru-RU"`/`"ru"` locale left over from earlier work. It now uses the runtime's default locale.
+- `App.tsx` had grown into a single ~1,170-line component mixing the sidebar, message list, message viewer, compose window, and all business logic. It's now a thin container: the presentational pieces moved into `src/components/mail/` (`Sidebar`, `MessageList`/`MessageListHeader`, `MessageViewer` - which now also owns the HTML-iframe resize `ResizeObserver` it needs - `ComposeWindow`, and the shared `IconButton`), each taking typed data/callback props, while `App.tsx` keeps state, data fetching, and Tauri IPC calls.
+
 ## Security
 
 Passwords and Gmail refresh tokens are stored in the operating system credential store using native keychains. Passwords, tokens, email addresses, and message contents are excluded from diagnostic logs.
