@@ -91,7 +91,7 @@ const generalEntries: SearchEntry[] = [
 ];
 
 function normalize(value: string) {
-  return value.trim().toLocaleLowerCase("ru-RU");
+  return value.trim().toLocaleLowerCase();
 }
 
 function scoreEntry(entry: SearchEntry, query: string) {
@@ -497,7 +497,7 @@ export function SettingsPage({
     return entries
       .map((entry) => ({ entry, score: scoreEntry(entry, normalizedQuery) }))
       .filter(({ score }) => score > 0)
-      .sort((left, right) => right.score - left.score || left.entry.title.localeCompare(right.entry.title, "ru"));
+      .sort((left, right) => right.score - left.score || left.entry.title.localeCompare(right.entry.title));
   }, [accountEntries, normalizedQuery]);
   const matchedIds = new Set(matches.map(({ entry }) => entry.id));
   const visibleGeneralEntries = generalEntries.filter((entry) => matchedIds.has(entry.id));
