@@ -642,7 +642,7 @@ fn remove_notification_exclusion(
 
 #[tauri::command]
 fn set_tray_unread_state(app: tauri::AppHandle, has_unread: bool) -> Result<(), String> {
-    tauri_plugin_log::log::debug!("set_tray_unread_state called with has_unread: {has_unread}");
+    tauri_plugin_log::log::info!("set_tray_unread_state called with has_unread: {has_unread}");
     if let Some(tray) = app.tray_by_id("main-tray") {
         let icon = if has_unread {
             tauri::image::Image::from_bytes(include_bytes!("../icons/icon-unread.png"))

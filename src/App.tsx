@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState, useTransition, type FormEvent, ty
 import { Archive, ArrowLeft, Clock3, LayoutTemplate, List, Trash2 } from "lucide-react";
 import { save } from "@tauri-apps/plugin-dialog";
 import { isPermissionGranted, requestPermission, sendNotification } from "@tauri-apps/plugin-notification";
+import { info as logInfo, warn as logWarn } from "@tauri-apps/plugin-log";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
@@ -92,6 +93,7 @@ function App() {
             if (!msg.isRead) unreadCount++;
         }
       }
+      void logInfo(`tray unread check: notifiableAccounts=${notifiableAccountIds.size} excludedSenders=${excludedSenderEmails.size} unreadCount=${unreadCount}`);
       setTrayUnreadState(unreadCount > 0).catch(console.error);
     }).catch(console.error);
   }, [syncRevision, cachedMessages, accounts, excludedSenderEmails]);
@@ -615,9 +617,16 @@ function App() {
           && !excludedSenderEmails.has(message.senderEmail.toLowerCase()),
       ).length;
       knownMessageKeys.current = currentKeys;
+      void logInfo(
+        `notification check: background=${isBackground} hasCompletedBackgroundSync=${hasCompletedBackgroundSync.current} notificationsEnabled=${backgroundSettings.notifications} newNotifiableCount=${newNotifiableCount}`,
+      );
       if (isBackground && hasCompletedBackgroundSync.current && successful.length && backgroundSettings.notifications && newNotifiableCount) {
         const granted = await isPermissionGranted() || await requestPermission() === "granted";
-        if (granted) sendNotification({ title: "RMail", body: `New messages: ${newNotifiableCount}.` });
+        void logInfo(`notification permission granted=${granted}`);
+        if (granted) {
+          sendNotification({ title: "RMail", body: `New messages: ${newNotifiableCount}.` });
+          void logInfo(`notification sent: count=${newNotifiableCount}`);
+        }
       }
       hasCompletedBackgroundSync.current = true;
       const errors = results.map((result, i) => result.status === "rejected" ? `${accountList[i].displayName}: ${result.reason instanceof Error ? result.reason.message : String(result.reason || "Unknown error")}` : null).filter(Boolean);
@@ -626,8 +635,9 @@ function App() {
           ? `Synchronized all ${successful.length} accounts, messages: ${messageCount}`
           : `Sync failed for ${errors.join("; ")}`
       ));
-    } catch {
+    } catch (reason) {
       if (!isBackground) setSyncMessage("Unable to update the local email cache");
+      void logWarn(`syncAllAccounts failed: background=${isBackground} reason=${reason instanceof Error ? reason.message : String(reason)}`);
     } finally {
       syncInProgress.current = false;
       if (!isBackground) setSyncing(false);
