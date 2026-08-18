@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState, useTransition, type FormEvent, type ReactNode } from "react";
-import { Archive, ArrowLeft, ChevronRight, Clock3, CheckCheck, Inbox, LayoutTemplate, List, Paperclip, PenLine, Plus, Search, Settings, Trash2, X } from "lucide-react";
+import { Archive, ArrowLeft, BellOff, ChevronRight, Clock3, CheckCheck, Inbox, LayoutTemplate, List, Paperclip, PenLine, Plus, Reply, Search, Settings, Trash2, X } from "lucide-react";
 import { save } from "@tauri-apps/plugin-dialog";
 import { isPermissionGranted, requestPermission, sendNotification } from "@tauri-apps/plugin-notification";
 import { listen } from "@tauri-apps/api/event";
@@ -8,6 +8,13 @@ import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { Button } from "@/components/ui/button";
 import { AccountSetup } from "@/components/AccountSetup";
 import { SettingsPage } from "@/components/SettingsPage";
+import {
+  ContextMenu,
+  ContextMenuContent,
+  ContextMenuItem,
+  ContextMenuSeparator,
+  ContextMenuTrigger,
+} from "@/components/ui/context-menu";
 import {
   ResizableHandle,
   ResizablePanel,
@@ -21,6 +28,7 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import {
+  addNotificationExclusion,
   deleteDraft,
   deleteMessages,
   listAccounts,
@@ -499,7 +507,7 @@ function App() {
   }, [accounts, backgroundSettings]);
 
   if (loadError) {
-    return <main className="grid min-h-svh place-items-center p-6 text-sm text-destructive">{loadError}</main>;
+    return <main className="grid min-h-svh place-items-center p-6 text-sm text-destructive-text">{loadError}</main>;
   }
 
   if (!accounts) {
@@ -574,6 +582,28 @@ function App() {
     setComposeMessage(null);
     setComposeAccountId(activeAccountId ?? accountList[0]?.id ?? null);
     setComposeOpen(true);
+  }
+
+  function handleReplyToMessage(message: CachedMessage) {
+    setCompose({
+      recipients: message.senderEmail || message.sender,
+      subject: /^re:/i.test(message.subject) ? message.subject : `Re: ${message.subject}`,
+      body: "",
+    });
+    setDraftId(null);
+    setComposeMessage(null);
+    setComposeAccountId(message.accountId);
+    setComposeOpen(true);
+  }
+
+  async function handleExcludeSenderFromNotifications(message: CachedMessage) {
+    const sender = message.senderEmail || message.sender;
+    try {
+      await addNotificationExclusion(sender);
+      await refreshNotificationExclusions();
+    } catch (reason) {
+      console.error("Unable to exclude the sender from notifications:", reason);
+    }
   }
 
   async function saveComposeDraft(): Promise<Draft> {
@@ -742,58 +772,84 @@ function App() {
                       visibleMessages.map((message) => {
                         const key = messageKey(message);
                         const isChecked = selectedMessageKeys.has(key);
+                        const isSenderExcluded = excludedSenderEmails.has(message.senderEmail.toLowerCase());
                         return (
-                          <div className="group/row flex items-center gap-1" key={key}>
-                            <span className={`shrink-0 pl-1.5 transition-opacity ${selectedInView.length > 0 || isChecked ? "opacity-100" : "opacity-0 group-hover/row:opacity-100"}`}>
-                              <input
-                                aria-label={`Select message from ${message.sender}`}
-                                checked={isChecked}
-                                className="size-4 accent-primary"
-                                onChange={(event) => toggleMessageSelection(key, event.target.checked)}
-                                type="checkbox"
-                              />
-                            </span>
-                            <button
-                              className="message-row flex-1"
-                              data-selected={selectedMessageKey === key}
-                              onClick={() => {
-                                if (!message.isRead) {
-                                  setCachedMessages((current) =>
-                                    current.map((m) => (messageKey(m) === key ? { ...m, isRead: true } : m))
-                                  );
-                                  markMessageRead({
-                                    accountId: message.accountId,
-                                    mailboxPath: message.mailboxPath,
-                                    uid: message.uid,
-                                  }).catch(console.error);
-                                }
-                                setSelectedMessageKey(key);
-                              }}
-                              type="button"
-                            >
-                              <div className={`flex ${layoutMode === "compact" ? "items-center gap-4" : "items-start gap-3"}`}>
-                                <span className={`size-2 shrink-0 rounded-full bg-primary opacity-0 data-[unread=true]:opacity-100 ${layoutMode === "compact" ? "" : "mt-1"}`} data-unread={!message.isRead} />
-                                {layoutMode === "compact" ? (
-                                  <div className="min-w-0 flex-1 flex items-center gap-4 text-left">
-                                    <p className={`w-64 shrink-0 truncate text-sm ${!message.isRead ? "font-semibold text-foreground/90" : "font-normal text-foreground/70"}`}>{message.sender}</p>
-                                    <p className={`flex-1 truncate text-sm ${!message.isRead ? "font-semibold text-foreground/90" : "font-normal text-foreground/70"}`}>
-                                      {message.subject} <span className="text-muted-foreground font-normal ml-2">&middot; {message.accountDisplayName} &middot; {folderLabel(message.mailboxPath)}</span>
-                                    </p>
-                                    <time className={`shrink-0 text-xs ${!message.isRead ? "font-semibold text-foreground/90" : "text-muted-foreground"}`}>{message.date}</time>
+                          <ContextMenu key={key}>
+                            <ContextMenuTrigger asChild>
+                              <div className="group/row flex items-center gap-1">
+                                <span className={`shrink-0 pl-1.5 transition-opacity ${selectedInView.length > 0 || isChecked ? "opacity-100" : "opacity-0 group-hover/row:opacity-100"}`}>
+                                  <input
+                                    aria-label={`Select message from ${message.sender}`}
+                                    checked={isChecked}
+                                    className="size-4 accent-primary"
+                                    onChange={(event) => toggleMessageSelection(key, event.target.checked)}
+                                    type="checkbox"
+                                  />
+                                </span>
+                                <button
+                                  className="message-row flex-1"
+                                  data-selected={selectedMessageKey === key}
+                                  onClick={() => {
+                                    if (!message.isRead) {
+                                      setCachedMessages((current) =>
+                                        current.map((m) => (messageKey(m) === key ? { ...m, isRead: true } : m))
+                                      );
+                                      markMessageRead({
+                                        accountId: message.accountId,
+                                        mailboxPath: message.mailboxPath,
+                                        uid: message.uid,
+                                      }).catch(console.error);
+                                    }
+                                    setSelectedMessageKey(key);
+                                  }}
+                                  type="button"
+                                >
+                                  <div className={`flex ${layoutMode === "compact" ? "items-center gap-4" : "items-start gap-3"}`}>
+                                    <span className={`size-2 shrink-0 rounded-full bg-primary opacity-0 data-[unread=true]:opacity-100 ${layoutMode === "compact" ? "" : "mt-1"}`} data-unread={!message.isRead} />
+                                    {layoutMode === "compact" ? (
+                                      <div className="min-w-0 flex-1 flex items-center gap-4 text-left">
+                                        <p className={`w-64 shrink-0 truncate text-sm ${!message.isRead ? "font-semibold text-foreground/90" : "font-normal text-foreground/70"}`}>
+                                          {message.sender}
+                                          {isSenderExcluded ? <BellOff className="ml-1.5 inline size-3 text-muted-foreground" /> : null}
+                                        </p>
+                                        <p className={`flex-1 truncate text-sm ${!message.isRead ? "font-semibold text-foreground/90" : "font-normal text-foreground/70"}`}>
+                                          {message.subject} <span className="text-muted-foreground font-normal ml-2">&middot; {message.accountDisplayName} &middot; {folderLabel(message.mailboxPath)}</span>
+                                        </p>
+                                        <time className={`shrink-0 text-xs ${!message.isRead ? "font-semibold text-foreground/90" : "text-muted-foreground"}`}>{message.date}</time>
+                                      </div>
+                                    ) : (
+                                      <div className="min-w-0 flex-1 text-left">
+                                        <div className="flex items-center gap-3">
+                                          <p className={`truncate text-sm ${!message.isRead ? "font-semibold text-foreground/90" : "font-medium text-foreground/70"}`}>
+                                            {message.sender}
+                                            {isSenderExcluded ? <BellOff className="ml-1.5 inline size-3 text-muted-foreground" /> : null}
+                                          </p>
+                                          <time className={`ml-auto text-xs ${!message.isRead ? "font-semibold text-foreground/90" : "text-muted-foreground"}`}>{message.date}</time>
+                                        </div>
+                                        <p className={`mt-1 truncate text-sm ${!message.isRead ? "font-semibold text-foreground/90" : "font-normal text-foreground/70"}`}>{message.subject}</p>
+                                        <p className="mt-1 text-xs leading-5 text-muted-foreground">{message.accountDisplayName} &middot; {folderLabel(message.mailboxPath)}</p>
+                                      </div>
+                                    )}
                                   </div>
-                                ) : (
-                                  <div className="min-w-0 flex-1 text-left">
-                                    <div className="flex items-center gap-3">
-                                      <p className={`truncate text-sm ${!message.isRead ? "font-semibold text-foreground/90" : "font-medium text-foreground/70"}`}>{message.sender}</p>
-                                      <time className={`ml-auto text-xs ${!message.isRead ? "font-semibold text-foreground/90" : "text-muted-foreground"}`}>{message.date}</time>
-                                    </div>
-                                    <p className={`mt-1 truncate text-sm ${!message.isRead ? "font-semibold text-foreground/90" : "font-normal text-foreground/70"}`}>{message.subject}</p>
-                                    <p className="mt-1 text-xs leading-5 text-muted-foreground">{message.accountDisplayName} &middot; {folderLabel(message.mailboxPath)}</p>
-                                  </div>
-                                )}
+                                </button>
                               </div>
-                            </button>
-                          </div>
+                            </ContextMenuTrigger>
+                            <ContextMenuContent>
+                              <ContextMenuItem onSelect={() => handleReplyToMessage(message)}>
+                                <Reply /> Reply
+                              </ContextMenuItem>
+                              <ContextMenuItem
+                                disabled={isSenderExcluded}
+                                onSelect={() => void handleExcludeSenderFromNotifications(message)}
+                              >
+                                <BellOff /> {isSenderExcluded ? "Notifications already excluded" : "Exclude from notifications"}
+                              </ContextMenuItem>
+                              <ContextMenuSeparator />
+                              <ContextMenuItem onSelect={() => handleDeleteMessage(message)} variant="destructive">
+                                <Trash2 /> Delete
+                              </ContextMenuItem>
+                            </ContextMenuContent>
+                          </ContextMenu>
                         );
                       })
                     ) : (

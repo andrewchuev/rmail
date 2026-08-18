@@ -131,12 +131,12 @@ function ClearCacheAction({ onCacheFlushed }: { onCacheFlushed: () => Promise<vo
 
   return (
     <label className="flex items-center gap-4 p-5" id="flush-cache">
-      <span className="grid size-10 shrink-0 place-items-center rounded-lg bg-destructive/10 text-destructive"><Database className="size-5" /></span>
+      <span className="grid size-10 shrink-0 place-items-center rounded-lg bg-destructive/10 text-destructive-text"><Database className="size-5" /></span>
       <span className="min-w-0 flex-1">
         <span className="block text-sm font-medium">Clear message cache</span>
         <span className="mt-1 block text-sm text-muted-foreground">Delete all cached mailboxes, messages, and message bodies from this device. Accounts, passwords, and local drafts are kept; the next sync re-downloads everything.</span>
         {message ? <span className="mt-2 block text-sm text-emerald-700 dark:text-emerald-400" role="status">{message}</span> : null}
-        {error ? <span className="mt-2 block text-sm text-destructive" role="alert">{error}</span> : null}
+        {error ? <span className="mt-2 block text-sm text-destructive-text" role="alert">{error}</span> : null}
       </span>
       {isConfirming ? (
         <div className="flex shrink-0 gap-2">
@@ -216,7 +216,7 @@ function NotificationExclusionsEditor({
           {isAdding ? "Adding…" : "Add"}
         </Button>
       </form>
-      {error ? <p className="mt-2 text-sm text-destructive" role="alert">{error}</p> : null}
+      {error ? <p className="mt-2 text-sm text-destructive-text" role="alert">{error}</p> : null}
       {exclusions.length ? (
         <ul className="mt-4 space-y-1.5">
           {exclusions.map((exclusion) => (
@@ -402,7 +402,7 @@ function AccountCredentialsEditor({
               {isSaving ? "Waiting for Google…" : "Reconnect Google"}
             </Button>
             {message ? <p className="mt-3 text-sm text-emerald-700 dark:text-emerald-400" role="status">{message}</p> : null}
-            {error ? <p className="mt-3 text-sm text-destructive" role="alert">{error}</p> : null}
+            {error ? <p className="mt-3 text-sm text-destructive-text" role="alert">{error}</p> : null}
           </div>
         </div>
       </article>
@@ -444,7 +444,7 @@ function AccountCredentialsEditor({
           <small>RMail verifies IMAP and SMTP with these settings before saving.</small>
         </label>
         {message ? <p className="text-sm text-emerald-700 dark:text-emerald-400" role="status">{message}</p> : null}
-        {error ? <p className="text-sm text-destructive" role="alert">{error}</p> : null}
+        {error ? <p className="text-sm text-destructive-text" role="alert">{error}</p> : null}
         <Button className="justify-self-start" disabled={isSaving} type="submit">
           {isSaving ? "Verifying and saving…" : "Verify and save"}
         </Button>

@@ -44,6 +44,7 @@ export function cachedMessagesEqual(left: CachedMessage[], right: CachedMessage[
     return messageKey(message) === messageKey(candidate)
       && message.accountDisplayName === candidate.accountDisplayName
       && message.sender === candidate.sender
+      && message.senderEmail === candidate.senderEmail
       && message.subject === candidate.subject
       && message.date === candidate.date
       && message.internalDate === candidate.internalDate

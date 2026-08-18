@@ -167,7 +167,7 @@ export function AccountSetup({
             {isTesting ? "Verifying connection…" : "Verify connection"}
           </Button>
           {connectionMessage ? <p className="text-sm text-emerald-700 dark:text-emerald-400" role="status">{connectionMessage}</p> : null}
-          {error ? <p className="text-sm text-destructive" role="alert">{error}</p> : null}
+          {error ? <p className="text-sm text-destructive-text" role="alert">{error}</p> : null}
           {diagnosticLog ? <p className="text-xs leading-5 text-muted-foreground">Diagnostic log: <code className="break-all">{diagnosticLog}</code></p> : null}
           <Button className="mt-2 w-full" disabled={isSubmitting} type="submit">
             {isSubmitting ? "Saving…" : "Continue"}
