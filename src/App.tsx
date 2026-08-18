@@ -778,7 +778,7 @@ function App() {
                 <ResizablePanel defaultSize="34%" minSize="26%">
                   <section className="flex h-full min-w-72 flex-col border-r">
                     {renderMessageListPane(
-                      <IconButton label="Compact mode" onClick={() => setLayoutMode("compact")}>
+                      <IconButton label="Compact mode" onClick={() => { setLayoutMode("compact"); setSelectedMessageKey(null); }}>
                         <List />
                       </IconButton>,
                     )}
