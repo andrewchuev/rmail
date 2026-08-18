@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import { BellOff, CheckCheck, Reply, Search, Trash2, X } from "lucide-react";
+import { BellOff, CheckCheck, CheckSquare, Reply, Search, Trash2, X } from "lucide-react";
 import {
   ContextMenu,
   ContextMenuContent,
@@ -65,6 +65,7 @@ export function MessageList({
   onDeleteMessage,
   onExcludeSender,
   onReply,
+  onSelectFromSender,
   onSelectMessage,
   onToggleMessageSelection,
   onToggleSelectAll,
@@ -81,6 +82,7 @@ export function MessageList({
   onDeleteMessage: (message: CachedMessage) => void;
   onExcludeSender: (message: CachedMessage) => void;
   onReply: (message: CachedMessage) => void;
+  onSelectFromSender: (message: CachedMessage) => void;
   onSelectMessage: (message: CachedMessage) => void;
   onToggleMessageSelection: (key: string, checked: boolean) => void;
   onToggleSelectAll: (checked: boolean) => void;
@@ -174,6 +176,9 @@ export function MessageList({
                 <ContextMenuContent>
                   <ContextMenuItem onSelect={() => onReply(message)}>
                     <Reply /> Reply
+                  </ContextMenuItem>
+                  <ContextMenuItem onSelect={() => onSelectFromSender(message)}>
+                    <CheckSquare /> Select from sender
                   </ContextMenuItem>
                   <ContextMenuItem
                     disabled={isSenderExcluded}

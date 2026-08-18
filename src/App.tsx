@@ -148,6 +148,19 @@ function App() {
     setSelectedMessageKeys(checked ? new Set(visibleMessages.map(messageKey)) : new Set());
   }
 
+  function handleSelectMessagesFromSender(message: CachedMessage) {
+    const senderKey = (message.senderEmail || message.sender).toLowerCase();
+    setSelectedMessageKeys((current) => {
+      const next = new Set(current);
+      for (const candidate of visibleMessages) {
+        if ((candidate.senderEmail || candidate.sender).toLowerCase() === senderKey) {
+          next.add(messageKey(candidate));
+        }
+      }
+      return next;
+    });
+  }
+
   function handleToggleAccount(accountId: number, isExpanded: boolean) {
     if (isExpanded) {
       setActiveAccountId(null);
@@ -709,6 +722,7 @@ function App() {
         onDeleteMessage={handleDeleteMessage}
         onExcludeSender={(message) => void handleExcludeSenderFromNotifications(message)}
         onReply={handleReplyToMessage}
+        onSelectFromSender={handleSelectMessagesFromSender}
         onSelectMessage={handleSelectMessage}
         onToggleMessageSelection={toggleMessageSelection}
         onToggleSelectAll={handleToggleSelectAll}
