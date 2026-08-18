@@ -1,4 +1,6 @@
-use std::time::Duration;
+use std::collections::HashMap;
+use std::sync::{Mutex, OnceLock};
+use std::time::{Duration, Instant};
 
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 use keyring::Entry;
@@ -20,6 +22,10 @@ const TOKEN_URL: &str = "https://oauth2.googleapis.com/token";
 const USER_INFO_URL: &str = "https://openidconnect.googleapis.com/v1/userinfo";
 const TOKEN_SERVICE: &str = "com.rmail.desktop.gmail";
 const CALLBACK_TIMEOUT: Duration = Duration::from_secs(300);
+/// Google access tokens are refreshed this long before their real expiry so a
+/// token never goes stale mid-request due to clock/latency slack.
+const TOKEN_EXPIRY_SAFETY_MARGIN: Duration = Duration::from_secs(60);
+const DEFAULT_TOKEN_TTL_SECS: u64 = 3600;
 
 #[derive(Debug)]
 pub struct GoogleAuthorization {
@@ -32,6 +38,51 @@ pub struct GoogleAuthorization {
 struct TokenResponse {
     access_token: String,
     refresh_token: Option<String>,
+    #[serde(default = "default_token_ttl_secs")]
+    expires_in: u64,
+}
+
+fn default_token_ttl_secs() -> u64 {
+    DEFAULT_TOKEN_TTL_SECS
+}
+
+struct CachedToken {
+    access_token: String,
+    expires_at: Instant,
+}
+
+/// Process-wide cache of Google access tokens, keyed by account email. Avoids
+/// a network round trip to Google's token endpoint on every IMAP/SMTP
+/// operation - `access_token` only refreshes once the cached token is close
+/// to its real expiry.
+fn token_cache() -> &'static Mutex<HashMap<String, CachedToken>> {
+    static CACHE: OnceLock<Mutex<HashMap<String, CachedToken>>> = OnceLock::new();
+    CACHE.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+fn cached_access_token(email: &str) -> Option<String> {
+    let cache = token_cache().lock().ok()?;
+    let cached = cache.get(email)?;
+    (cached.expires_at > Instant::now()).then(|| cached.access_token.clone())
+}
+
+fn cache_access_token(email: &str, access_token: &str, expires_in: u64) {
+    let ttl = Duration::from_secs(expires_in).saturating_sub(TOKEN_EXPIRY_SAFETY_MARGIN);
+    if let Ok(mut cache) = token_cache().lock() {
+        cache.insert(
+            email.to_string(),
+            CachedToken {
+                access_token: access_token.to_string(),
+                expires_at: Instant::now() + ttl,
+            },
+        );
+    }
+}
+
+fn invalidate_cached_token(email: &str) {
+    if let Ok(mut cache) = token_cache().lock() {
+        cache.remove(email);
+    }
 }
 
 #[derive(Deserialize)]
@@ -230,6 +281,7 @@ fn oauth_client_credentials() -> Result<(&'static str, &'static str), String> {
 }
 
 pub fn store_refresh_token(email: &str, refresh_token: &str) -> Result<(), String> {
+    invalidate_cached_token(email);
     Entry::new(TOKEN_SERVICE, email)
         .map_err(|error| error.to_string())?
         .set_password(refresh_token)
@@ -237,6 +289,7 @@ pub fn store_refresh_token(email: &str, refresh_token: &str) -> Result<(), Strin
 }
 
 pub fn delete_refresh_token(email: &str) -> Result<(), String> {
+    invalidate_cached_token(email);
     let entry = Entry::new(TOKEN_SERVICE, email).map_err(|error| error.to_string())?;
     match entry.delete_credential() {
         Ok(()) | Err(keyring::Error::NoEntry) => Ok(()),
@@ -245,12 +298,16 @@ pub fn delete_refresh_token(email: &str) -> Result<(), String> {
 }
 
 pub async fn access_token(email: &str) -> Result<String, String> {
+    if let Some(access_token) = cached_access_token(email) {
+        return Ok(access_token);
+    }
+
     let (client_id, client_secret) = oauth_client_credentials()?;
     let refresh_token = Entry::new(TOKEN_SERVICE, email)
         .map_err(|error| error.to_string())?
         .get_password()
         .map_err(|_| "Google authorization is unavailable. Reconnect the account.".to_string())?;
-    Client::new()
+    let token = Client::new()
         .post(TOKEN_URL)
         .form(&[
             ("client_id", client_id),
@@ -268,13 +325,36 @@ pub async fn access_token(email: &str) -> Result<String, String> {
         .map_err(|_| "Google authorization expired. Reconnect the account.".to_string())?
         .json::<TokenResponse>()
         .await
-        .map(|token| token.access_token)
-        .map_err(|_| "Invalid token response from Google.".to_string())
+        .map_err(|_| "Invalid token response from Google.".to_string())?;
+
+    cache_access_token(email, &token.access_token, token.expires_in);
+    Ok(token.access_token)
 }
 
 #[cfg(test)]
 mod tests {
-    use super::pkce_challenge;
+    use super::{cache_access_token, cached_access_token, invalidate_cached_token, pkce_challenge};
+
+    #[test]
+    fn caches_access_token_until_invalidated() {
+        let email = "cache-test@example.com";
+        assert_eq!(cached_access_token(email), None);
+
+        cache_access_token(email, "token-1", 3600);
+        assert_eq!(cached_access_token(email), Some("token-1".to_string()));
+
+        invalidate_cached_token(email);
+        assert_eq!(cached_access_token(email), None);
+    }
+
+    #[test]
+    fn does_not_serve_a_token_within_the_expiry_safety_margin() {
+        let email = "cache-test-expiring@example.com";
+        // A 30s TTL is entirely inside the 60s safety margin, so the token
+        // is treated as already expired rather than served stale.
+        cache_access_token(email, "token", 30);
+        assert_eq!(cached_access_token(email), None);
+    }
 
     #[test]
     fn creates_rfc_7636_s256_challenge() {
