@@ -75,6 +75,7 @@ pub struct MessageSnapshot {
     pub mailbox_path: String,
     pub uid: u32,
     pub sender: String,
+    pub sender_email: String,
     pub subject: String,
     pub date: String,
     pub internal_date: i64,
@@ -456,17 +457,18 @@ fn snapshot_message(
 ) -> Option<MessageSnapshot> {
     let envelope = fetch.envelope()?;
     let uid = fetch.uid?;
-    let sender = envelope
+    let (sender, sender_email) = envelope
         .from
         .as_ref()
         .and_then(|addresses| addresses.first())
         .map(format_address)
-        .unwrap_or_else(|| "Unknown sender".to_string());
+        .unwrap_or_else(|| ("Unknown sender".to_string(), String::new()));
 
     Some(MessageSnapshot {
         mailbox_path: mailbox_path.to_string(),
         uid,
         sender,
+        sender_email,
         subject: envelope
             .subject
             .as_deref()
@@ -487,11 +489,12 @@ fn snapshot_message(
     })
 }
 
-fn format_address(address: &async_imap::imap_proto::types::Address<'_>) -> String {
-    if let Some(name) = address.name.as_deref() {
-        return decode_header(name);
-    }
-
+/// Returns an address's display name (falling back to its email, then to
+/// "Unknown sender") alongside its raw email address ("" if unavailable).
+/// The email is kept separate from the display name so callers - notably
+/// the notification-exclusion list - can match a stable identifier instead
+/// of a display name a sender can set to anything.
+fn format_address(address: &async_imap::imap_proto::types::Address<'_>) -> (String, String) {
     let mailbox = address
         .mailbox
         .as_deref()
@@ -502,11 +505,19 @@ fn format_address(address: &async_imap::imap_proto::types::Address<'_>) -> Strin
         .as_deref()
         .map(decode_header)
         .unwrap_or_default();
-    match (mailbox.is_empty(), host.is_empty()) {
+    let email = match (mailbox.is_empty(), host.is_empty()) {
         (false, false) => format!("{mailbox}@{host}"),
         (false, true) => mailbox,
-        _ => "Unknown sender".to_string(),
-    }
+        _ => String::new(),
+    };
+
+    let display = match address.name.as_deref().map(decode_header) {
+        Some(name) => name,
+        None if !email.is_empty() => email.clone(),
+        None => "Unknown sender".to_string(),
+    };
+
+    (display, email)
 }
 
 fn decode_header(value: &[u8]) -> String {
@@ -933,11 +944,13 @@ async fn find_trash_mailbox(session: &mut ImapSession) -> Option<String> {
 mod tests {
     use super::{
         attachment_content, build_outgoing_message, decode_header, ensure_message_source_size,
-        parse_message, validate_input, MailConnectionInput, OutgoingMessageInput, XOAuth2,
-        MESSAGE_SOURCE_BYTE_LIMIT,
+        format_address, parse_message, validate_input, MailConnectionInput, OutgoingMessageInput,
+        XOAuth2, MESSAGE_SOURCE_BYTE_LIMIT,
     };
+    use async_imap::imap_proto::types::Address;
     use async_imap::Authenticator;
     use mailparse::parse_mail;
+    use std::borrow::Cow;
 
     #[test]
     fn rejects_unsafe_server_names() {
@@ -1033,5 +1046,41 @@ mod tests {
     #[test]
     fn decodes_mime_encoded_header() {
         assert_eq!(decode_header(b"=?UTF-8?B?0J/RgNC40LLQtdGC?="), "Привет");
+    }
+
+    #[test]
+    fn separates_display_name_from_email_address() {
+        let named = Address {
+            name: Some(Cow::Borrowed(b"Jane Doe".as_slice())),
+            adl: None,
+            mailbox: Some(Cow::Borrowed(b"jane".as_slice())),
+            host: Some(Cow::Borrowed(b"example.com".as_slice())),
+        };
+        assert_eq!(
+            format_address(&named),
+            ("Jane Doe".to_string(), "jane@example.com".to_string())
+        );
+
+        let unnamed = Address {
+            name: None,
+            adl: None,
+            mailbox: Some(Cow::Borrowed(b"jane".as_slice())),
+            host: Some(Cow::Borrowed(b"example.com".as_slice())),
+        };
+        assert_eq!(
+            format_address(&unnamed),
+            ("jane@example.com".to_string(), "jane@example.com".to_string())
+        );
+
+        let empty = Address {
+            name: None,
+            adl: None,
+            mailbox: None,
+            host: None,
+        };
+        assert_eq!(
+            format_address(&empty),
+            ("Unknown sender".to_string(), String::new())
+        );
     }
 }

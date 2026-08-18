@@ -14,8 +14,8 @@ use mail::{
 };
 use serde::{Deserialize, Serialize};
 use storage::{
-    Account, CachedMailbox, CachedMessage, CreateAccountInput, Database, Draft, SaveDraftInput,
-    UpdateAccountInput,
+    Account, CachedMailbox, CachedMessage, CreateAccountInput, Database, Draft,
+    NotificationExclusion, SaveDraftInput, UpdateAccountInput,
 };
 use tauri::{
     menu::{Menu, MenuItem, PredefinedMenuItem},
@@ -621,6 +621,29 @@ fn flush_message_cache(state: tauri::State<'_, AppState>) -> Result<(), String> 
 }
 
 #[tauri::command]
+fn list_notification_exclusions(
+    state: tauri::State<'_, AppState>,
+) -> Result<Vec<NotificationExclusion>, String> {
+    state.database.list_notification_exclusions()
+}
+
+#[tauri::command]
+fn add_notification_exclusion(
+    sender: String,
+    state: tauri::State<'_, AppState>,
+) -> Result<NotificationExclusion, String> {
+    state.database.add_notification_exclusion(&sender)
+}
+
+#[tauri::command]
+fn remove_notification_exclusion(
+    id: i64,
+    state: tauri::State<'_, AppState>,
+) -> Result<(), String> {
+    state.database.remove_notification_exclusion(id)
+}
+
+#[tauri::command]
 fn set_tray_unread_state(app: tauri::AppHandle, has_unread: bool) -> Result<(), String> {
     println!("set_tray_unread_state called with has_unread: {}", has_unread);
     if let Some(tray) = app.tray_by_id("main-tray") {
@@ -767,6 +790,9 @@ pub fn run() {
             mark_multiple_messages_read,
             delete_messages,
             flush_message_cache,
+            list_notification_exclusions,
+            add_notification_exclusion,
+            remove_notification_exclusion,
             set_tray_unread_state
         ])
         .run(tauri::generate_context!())

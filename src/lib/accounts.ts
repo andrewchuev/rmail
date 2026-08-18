@@ -43,10 +43,16 @@ export type CachedMessage = {
   mailboxPath: string;
   uid: number;
   sender: string;
+  senderEmail: string;
   subject: string;
   date: string;
   internalDate: number;
   isRead: boolean;
+};
+
+export type NotificationExclusion = {
+  id: number;
+  sender: string;
 };
 
 export type MessageBody = {
@@ -224,4 +230,16 @@ export async function setTrayUnreadState(hasUnread: boolean): Promise<void> {
 
 export async function flushMessageCache(): Promise<void> {
   return invoke<void>("flush_message_cache");
+}
+
+export async function listNotificationExclusions(): Promise<NotificationExclusion[]> {
+  return invoke<NotificationExclusion[]>("list_notification_exclusions");
+}
+
+export async function addNotificationExclusion(sender: string): Promise<NotificationExclusion> {
+  return invoke<NotificationExclusion>("add_notification_exclusion", { sender });
+}
+
+export async function removeNotificationExclusion(id: number): Promise<void> {
+  return invoke<void>("remove_notification_exclusion", { id });
 }

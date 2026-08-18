@@ -26,6 +26,7 @@ import {
   listAccounts,
   listCachedMailboxes,
   listCachedMessages,
+  listNotificationExclusions,
   listUnifiedInbox,
   loadMessageBody,
   markMessageRead,
@@ -41,6 +42,7 @@ import {
   type Draft,
   type MessageBody,
   type MessageRef,
+  type NotificationExclusion,
 } from "@/lib/accounts";
 import { applyWindowSettings, loadBackgroundSettings, saveBackgroundSettings, type BackgroundSettings } from "@/lib/settings";
 import "./App.css";
@@ -111,6 +113,11 @@ function App() {
   const [isSending, setSending] = useState(false);
   const [syncMessage, setSyncMessage] = useState("Synchronization pending");
   const [syncRevision, setSyncRevision] = useState(0);
+  const [notificationExclusions, setNotificationExclusions] = useState<NotificationExclusion[]>([]);
+  const excludedSenderEmails = useMemo(
+    () => new Set(notificationExclusions.map((exclusion) => exclusion.sender.toLowerCase())),
+    [notificationExclusions],
+  );
   useEffect(() => {
     const notifiableAccountIds = new Set((accounts ?? []).filter((a) => a.notificationsEnabled).map((a) => a.id));
     listUnifiedInbox().then((inbox) => {
@@ -119,6 +126,7 @@ function App() {
       let unreadCount = 0;
       for (const msg of inbox) {
         if (!notifiableAccountIds.has(msg.accountId)) continue;
+        if (excludedSenderEmails.has(msg.senderEmail.toLowerCase())) continue;
         const cached = cachedMessages.find(m => m.uid === msg.uid && m.accountId === msg.accountId);
         if (cached) {
             if (!cached.isRead) unreadCount++;
@@ -128,7 +136,7 @@ function App() {
       }
       setTrayUnreadState(unreadCount > 0).catch(console.error);
     }).catch(console.error);
-  }, [syncRevision, cachedMessages, accounts]);
+  }, [syncRevision, cachedMessages, accounts, excludedSenderEmails]);
   const [messageBody, setMessageBody] = useState<MessageBody | null>(null);
   const [bodyError, setBodyError] = useState<string | null>(null);
   const [isBodyLoading, setBodyLoading] = useState(false);
@@ -289,6 +297,26 @@ function App() {
       ignore = true;
     };
   }, []);
+
+  useEffect(() => {
+    let ignore = false;
+
+    void listNotificationExclusions()
+      .then((items) => {
+        if (!ignore) {
+          setNotificationExclusions(items);
+        }
+      })
+      .catch(console.error);
+
+    return () => {
+      ignore = true;
+    };
+  }, []);
+
+  async function refreshNotificationExclusions() {
+    setNotificationExclusions(await listNotificationExclusions());
+  }
 
   useEffect(() => {
     saveBackgroundSettings(backgroundSettings);
@@ -616,7 +644,9 @@ function App() {
       const currentKeys = new Set(inbox.map(messageKey));
       const notifiableAccountIds = new Set(accountList.filter((a) => a.notificationsEnabled).map((a) => a.id));
       const newNotifiableCount = inbox.filter(
-        (message) => !knownMessageKeys.current.has(messageKey(message)) && notifiableAccountIds.has(message.accountId),
+        (message) => !knownMessageKeys.current.has(messageKey(message))
+          && notifiableAccountIds.has(message.accountId)
+          && !excludedSenderEmails.has(message.senderEmail.toLowerCase()),
       ).length;
       knownMessageKeys.current = currentKeys;
       if (isBackground && hasCompletedBackgroundSync.current && successful.length && backgroundSettings.notifications && newNotifiableCount) {
@@ -652,11 +682,13 @@ function App() {
       <SettingsPage
         accounts={accountList}
         backgroundSettings={backgroundSettings}
+        notificationExclusions={notificationExclusions}
         onAccountUpdated={(updated) => setAccounts((current) => current?.map((account) => account.id === updated.id ? updated : account) ?? [])}
         onAddAccount={() => setAddingAccount(true)}
         onBack={() => setActiveView("mail")}
         onBackgroundSettingsChange={setBackgroundSettings}
         onCacheFlushed={handleCacheFlushed}
+        onNotificationExclusionsChanged={refreshNotificationExclusions}
       />
     );
   }

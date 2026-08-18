@@ -1,14 +1,17 @@
 import { useEffect, useMemo, useState, type FormEvent } from "react";
-import { AppWindow, ArrowLeft, Bell, Clock3, Database, Mail, Plus, Search } from "lucide-react";
+import { AppWindow, Bell, BellOff, ArrowLeft, Clock3, Database, Mail, Plus, Search, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
+  addNotificationExclusion,
   flushMessageCache,
   reconnectGmail,
+  removeNotificationExclusion,
   renameAccount,
   setAccountNotifications,
   testMailConnection,
   updateAccount,
   type Account,
+  type NotificationExclusion,
   type UpdateAccountInput,
 } from "@/lib/accounts";
 import { readCredential, saveCredentials } from "@/lib/credentials";
@@ -20,11 +23,13 @@ import { ThemeSwitcher } from "./ThemeSwitcher";
 type SettingsPageProps = {
   accounts: Account[];
   backgroundSettings: BackgroundSettings;
+  notificationExclusions: NotificationExclusion[];
   onAccountUpdated: (account: Account) => void;
   onAddAccount: () => void;
   onBack: () => void;
   onBackgroundSettingsChange: (settings: BackgroundSettings) => void;
   onCacheFlushed: () => Promise<void>;
+  onNotificationExclusionsChanged: () => Promise<void>;
 };
 
 type SearchEntry = {
@@ -76,6 +81,12 @@ const generalEntries: SearchEntry[] = [
     title: "Clear message cache",
     description: "Delete all cached mailboxes, messages, and message bodies from this device.",
     keywords: "clear flush database cache reset resync storage disk space wipe",
+  },
+  {
+    id: "notification-exclusions",
+    title: "Notification exclusions",
+    description: "Silence notifications and the tray icon for specific senders, across every account.",
+    keywords: "notification exclusions mute silence sender block ignore tray icon exceptions",
   },
 ];
 
@@ -138,6 +149,96 @@ function ClearCacheAction({ onCacheFlushed }: { onCacheFlushed: () => Promise<vo
         <Button className="shrink-0" onClick={() => setConfirming(true)} size="sm" type="button" variant="outline">Clear cache</Button>
       )}
     </label>
+  );
+}
+
+function NotificationExclusionsEditor({
+  exclusions,
+  onExclusionsChanged,
+}: {
+  exclusions: NotificationExclusion[];
+  onExclusionsChanged: () => Promise<void>;
+}) {
+  const [input, setInput] = useState("");
+  const [error, setError] = useState<string | null>(null);
+  const [isAdding, setAdding] = useState(false);
+  const [removingId, setRemovingId] = useState<number | null>(null);
+
+  async function handleAdd(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const sender = input.trim();
+    if (!sender) return;
+
+    setError(null);
+    setAdding(true);
+    try {
+      await addNotificationExclusion(sender);
+      await onExclusionsChanged();
+      setInput("");
+    } catch (reason) {
+      setError(reasonMessage(reason, "Unable to add the exclusion."));
+    } finally {
+      setAdding(false);
+    }
+  }
+
+  async function handleRemove(id: number) {
+    setError(null);
+    setRemovingId(id);
+    try {
+      await removeNotificationExclusion(id);
+      await onExclusionsChanged();
+    } catch (reason) {
+      setError(reasonMessage(reason, "Unable to remove the exclusion."));
+    } finally {
+      setRemovingId(null);
+    }
+  }
+
+  return (
+    <div className="p-5" id="notification-exclusions">
+      <div className="flex items-center gap-4">
+        <span className="grid size-10 shrink-0 place-items-center rounded-lg bg-primary/10 text-primary"><BellOff className="size-5" /></span>
+        <span className="min-w-0 flex-1">
+          <span className="block text-sm font-medium">Excluded senders</span>
+          <span className="mt-1 block text-sm text-muted-foreground">Messages from these senders never trigger a notification or the tray unread indicator, even when notifications are enabled for the account.</span>
+        </span>
+      </div>
+      <form className="mt-4 flex gap-2" onSubmit={handleAdd}>
+        <input
+          className="flex-1 rounded-md border bg-background px-3 py-2 text-sm"
+          onChange={(event) => setInput(event.target.value)}
+          placeholder="sender@example.com"
+          type="email"
+          value={input}
+        />
+        <Button disabled={isAdding || !input.trim()} type="submit">
+          {isAdding ? "Adding…" : "Add"}
+        </Button>
+      </form>
+      {error ? <p className="mt-2 text-sm text-destructive" role="alert">{error}</p> : null}
+      {exclusions.length ? (
+        <ul className="mt-4 space-y-1.5">
+          {exclusions.map((exclusion) => (
+            <li className="flex items-center justify-between gap-3 rounded-lg border px-3 py-2 text-sm" key={exclusion.id}>
+              <span className="truncate">{exclusion.sender}</span>
+              <Button
+                aria-label={`Remove ${exclusion.sender} from exclusions`}
+                disabled={removingId === exclusion.id}
+                onClick={() => void handleRemove(exclusion.id)}
+                size="icon-sm"
+                type="button"
+                variant="ghost"
+              >
+                <X className="size-3.5" />
+              </Button>
+            </li>
+          ))}
+        </ul>
+      ) : (
+        <p className="mt-4 text-sm text-muted-foreground">No excluded senders yet.</p>
+      )}
+    </div>
   );
 }
 
@@ -355,11 +456,13 @@ function AccountCredentialsEditor({
 export function SettingsPage({
   accounts,
   backgroundSettings,
+  notificationExclusions,
   onAccountUpdated,
   onAddAccount,
   onBack,
   onBackgroundSettingsChange,
   onCacheFlushed,
+  onNotificationExclusionsChanged,
 }: SettingsPageProps) {
   const [query, setQuery] = useState("");
   const [autostartState, setAutostartState] = useState<boolean>(false);
@@ -494,6 +597,18 @@ export function SettingsPage({
                 </label>
               ) : null}
               {matchedIds.has("flush-cache") ? <ClearCacheAction onCacheFlushed={onCacheFlushed} /> : null}
+            </div>
+          </section>
+        ) : null}
+
+        {matchedIds.has("notification-exclusions") ? (
+          <section className="mt-10" aria-labelledby="notification-exclusions-title">
+            <div className="mb-4">
+              <h2 className="text-lg font-semibold" id="notification-exclusions-title">Notification exclusions</h2>
+              <p className="mt-1 text-sm text-muted-foreground">Silence notifications and the tray icon for specific senders, across every account.</p>
+            </div>
+            <div className="rounded-xl border bg-card">
+              <NotificationExclusionsEditor exclusions={notificationExclusions} onExclusionsChanged={onNotificationExclusionsChanged} />
             </div>
           </section>
         ) : null}

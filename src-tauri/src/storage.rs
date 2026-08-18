@@ -51,6 +51,7 @@ pub struct CachedMessage {
     pub mailbox_path: String,
     pub uid: u32,
     pub sender: String,
+    pub sender_email: String,
     pub subject: String,
     pub date: String,
     pub internal_date: i64,
@@ -75,6 +76,15 @@ pub struct Draft {
     pub subject: String,
     pub body: String,
     pub updated_at: String,
+}
+
+/// A sender email address excluded, across every account, from desktop
+/// notifications and the tray unread indicator.
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NotificationExclusion {
+    pub id: i64,
+    pub sender: String,
 }
 
 pub struct Database {
@@ -243,8 +253,8 @@ impl Database {
         let mut statement = connection
             .prepare(
                 "SELECT messages.account_id, accounts.display_name, messages.mailbox_path,
-                        messages.uid, messages.sender, messages.subject, messages.date,
-                        messages.internal_date, messages.is_read
+                        messages.uid, messages.sender, messages.sender_email, messages.subject,
+                        messages.date, messages.internal_date, messages.is_read
                  FROM messages
                  JOIN accounts ON accounts.id = messages.account_id
                  WHERE messages.account_id = ?1 AND messages.mailbox_path = ?2
@@ -259,10 +269,11 @@ impl Database {
                     mailbox_path: row.get(2)?,
                     uid: row.get(3)?,
                     sender: row.get(4)?,
-                    subject: row.get(5)?,
-                    date: row.get(6)?,
-                    internal_date: row.get(7)?,
-                    is_read: row.get(8)?,
+                    sender_email: row.get(5)?,
+                    subject: row.get(6)?,
+                    date: row.get(7)?,
+                    internal_date: row.get(8)?,
+                    is_read: row.get(9)?,
                 })
             })
             .map_err(|error| error.to_string())?
@@ -277,8 +288,8 @@ impl Database {
         let mut statement = connection
             .prepare(
                 "SELECT messages.account_id, accounts.display_name, messages.mailbox_path,
-                        messages.uid, messages.sender, messages.subject, messages.date,
-                        messages.internal_date, messages.is_read
+                        messages.uid, messages.sender, messages.sender_email, messages.subject,
+                        messages.date, messages.internal_date, messages.is_read
                  FROM messages
                  JOIN accounts ON accounts.id = messages.account_id
                  WHERE messages.mailbox_path = 'INBOX' COLLATE NOCASE
@@ -293,10 +304,11 @@ impl Database {
                     mailbox_path: row.get(2)?,
                     uid: row.get(3)?,
                     sender: row.get(4)?,
-                    subject: row.get(5)?,
-                    date: row.get(6)?,
-                    internal_date: row.get(7)?,
-                    is_read: row.get(8)?,
+                    sender_email: row.get(5)?,
+                    subject: row.get(6)?,
+                    date: row.get(7)?,
+                    internal_date: row.get(8)?,
+                    is_read: row.get(9)?,
                 })
             })
             .map_err(|error| error.to_string())?
@@ -614,10 +626,11 @@ impl Database {
         for message in &snapshot.messages {
             transaction
                 .execute(
-                    "INSERT INTO messages (account_id, mailbox_path, uid, sender, subject, date, internal_date, is_read, synced_at)
-                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, CURRENT_TIMESTAMP)
+                    "INSERT INTO messages (account_id, mailbox_path, uid, sender, sender_email, subject, date, internal_date, is_read, synced_at)
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, CURRENT_TIMESTAMP)
                      ON CONFLICT(account_id, mailbox_path, uid) DO UPDATE SET
                        sender = excluded.sender,
+                       sender_email = excluded.sender_email,
                        subject = excluded.subject,
                        date = excluded.date,
                        internal_date = excluded.internal_date,
@@ -628,6 +641,7 @@ impl Database {
                         message.mailbox_path,
                         message.uid,
                         message.sender,
+                        message.sender_email,
                         message.subject,
                         message.date,
                         message.internal_date,
@@ -786,6 +800,71 @@ impl Database {
         Ok((mailbox_count as usize, message_count as usize))
     }
 
+    pub fn list_notification_exclusions(&self) -> Result<Vec<NotificationExclusion>, String> {
+        let connection = self.connection.lock().map_err(|error| error.to_string())?;
+        let mut statement = connection
+            .prepare("SELECT id, sender FROM notification_exclusions ORDER BY sender ASC")
+            .map_err(|error| error.to_string())?;
+        let exclusions = statement
+            .query_map([], |row| {
+                Ok(NotificationExclusion {
+                    id: row.get(0)?,
+                    sender: row.get(1)?,
+                })
+            })
+            .map_err(|error| error.to_string())?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|error| error.to_string())?;
+
+        Ok(exclusions)
+    }
+
+    pub fn add_notification_exclusion(
+        &self,
+        sender: &str,
+    ) -> Result<NotificationExclusion, String> {
+        let sender = sender.trim().to_lowercase();
+        if !sender.contains('@') {
+            return Err("Enter a valid sender email address.".to_string());
+        }
+
+        let connection = self.connection.lock().map_err(|error| error.to_string())?;
+        connection
+            .execute(
+                "INSERT INTO notification_exclusions (sender) VALUES (?1)",
+                params![sender],
+            )
+            .map_err(|error| match error {
+                rusqlite::Error::SqliteFailure(sqlite_error, _)
+                    if sqlite_error.code == rusqlite::ErrorCode::ConstraintViolation =>
+                {
+                    "That sender is already excluded.".to_string()
+                }
+                error => error.to_string(),
+            })?;
+
+        Ok(NotificationExclusion {
+            id: connection.last_insert_rowid(),
+            sender,
+        })
+    }
+
+    pub fn remove_notification_exclusion(&self, id: i64) -> Result<(), String> {
+        let connection = self.connection.lock().map_err(|error| error.to_string())?;
+        let affected = connection
+            .execute(
+                "DELETE FROM notification_exclusions WHERE id = ?1",
+                params![id],
+            )
+            .map_err(|error| error.to_string())?;
+
+        if affected == 0 {
+            return Err("Exclusion was not found.".to_string());
+        }
+
+        Ok(())
+    }
+
     fn initialize(&self) -> Result<(), String> {
         let connection = self.connection.lock().map_err(|error| error.to_string())?;
         connection
@@ -860,6 +939,11 @@ impl Database {
                      subject TEXT NOT NULL,
                      body TEXT NOT NULL,
                      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+                 );
+                 CREATE TABLE IF NOT EXISTS notification_exclusions (
+                     id INTEGER PRIMARY KEY,
+                     sender TEXT NOT NULL UNIQUE COLLATE NOCASE,
+                     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
                  );",
             )
             .map_err(|error| error.to_string())?;
@@ -881,6 +965,12 @@ impl Database {
             "accounts",
             "notifications_enabled",
             "INTEGER NOT NULL DEFAULT 0",
+        )?;
+        add_column_if_missing(
+            &connection,
+            "messages",
+            "sender_email",
+            "TEXT NOT NULL DEFAULT ''",
         )
     }
 
@@ -1016,6 +1106,7 @@ mod tests {
                         mailbox_path: "INBOX".to_string(),
                         uid: 1,
                         sender: "Sender".to_string(),
+                        sender_email: "sender@example.com".to_string(),
                         subject: "Old message".to_string(),
                         date: "Today".to_string(),
                         internal_date: 1,
@@ -1094,6 +1185,7 @@ mod tests {
                         mailbox_path: "Sent".to_string(),
                         uid: 7,
                         sender: "Sender".to_string(),
+                        sender_email: "sender@example.com".to_string(),
                         subject: "Subject".to_string(),
                         date: "Today".to_string(),
                         internal_date: 1_700_000_000,
@@ -1217,6 +1309,7 @@ mod tests {
                             mailbox_path: "INBOX".to_string(),
                             uid,
                             sender: "Sender".to_string(),
+                            sender_email: "sender@example.com".to_string(),
                             subject: "Subject".to_string(),
                             date: "Today".to_string(),
                             internal_date,
@@ -1255,6 +1348,7 @@ mod tests {
                 mailbox_path: "INBOX".to_string(),
                 uid: 1,
                 sender: "Sender".to_string(),
+                sender_email: "sender@example.com".to_string(),
                 subject: "Subject".to_string(),
                 date: "Today".to_string(),
                 internal_date: 1,
@@ -1313,6 +1407,7 @@ mod tests {
                             mailbox_path: "INBOX".to_string(),
                             uid: 1,
                             sender: "Sender".to_string(),
+                            sender_email: "sender@example.com".to_string(),
                             subject: "Keep".to_string(),
                             date: "Today".to_string(),
                             internal_date: 1,
@@ -1322,6 +1417,7 @@ mod tests {
                             mailbox_path: "INBOX".to_string(),
                             uid: 2,
                             sender: "Sender".to_string(),
+                            sender_email: "sender@example.com".to_string(),
                             subject: "Delete".to_string(),
                             date: "Today".to_string(),
                             internal_date: 2,
@@ -1436,6 +1532,7 @@ mod tests {
                         mailbox_path: "INBOX".to_string(),
                         uid: 1,
                         sender: "Sender".to_string(),
+                        sender_email: "sender@example.com".to_string(),
                         subject: "Subject".to_string(),
                         date: "Today".to_string(),
                         internal_date: 1,
@@ -1498,5 +1595,41 @@ mod tests {
             .query_row("SELECT COUNT(*) FROM drafts", [], |row| row.get(0))
             .expect("drafts should count");
         assert_eq!(draft_count, 1);
+    }
+
+    #[test]
+    fn manages_notification_exclusions_case_insensitively() {
+        let database = Database::in_memory().expect("database should initialize");
+        assert!(database
+            .list_notification_exclusions()
+            .expect("exclusions should list")
+            .is_empty());
+
+        let exclusion = database
+            .add_notification_exclusion("  Newsletter@Example.com  ")
+            .expect("exclusion should be added");
+        assert_eq!(exclusion.sender, "newsletter@example.com");
+
+        assert!(database
+            .add_notification_exclusion("newsletter@EXAMPLE.com")
+            .is_err());
+        assert!(database.add_notification_exclusion("not-an-email").is_err());
+
+        assert_eq!(
+            database
+                .list_notification_exclusions()
+                .expect("exclusions should list")
+                .len(),
+            1
+        );
+
+        database
+            .remove_notification_exclusion(exclusion.id)
+            .expect("exclusion should be removed");
+        assert!(database
+            .list_notification_exclusions()
+            .expect("exclusions should list")
+            .is_empty());
+        assert!(database.remove_notification_exclusion(exclusion.id).is_err());
     }
 }
