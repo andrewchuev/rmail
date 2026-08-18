@@ -303,21 +303,30 @@ pub async fn send_outgoing_message(
 ) -> Result<(), String> {
     let input = validate_input(input)?;
     let message = build_outgoing_message(&input.username, display_name, message)?;
-    let mut transport = AsyncSmtpTransport::<Tokio1Executor>::starttls_relay(&input.smtp_host)
-        .map_err(|_| "Invalid SMTP server address.".to_string())?
-        .port(input.smtp_port)
-        .credentials(Credentials::new(
-            input.username,
-            input.oauth_access_token.clone().unwrap_or(input.password),
-        ));
-    if input.oauth_access_token.is_some() {
-        transport = transport.authentication(vec![Mechanism::Xoauth2]);
-    }
-    let transport = transport.build::<Tokio1Executor>();
+    let transport = build_smtp_transport(&input)?;
 
     within_timeout(transport.send(message), "Unable to send the message.")
         .await
         .map(|_| ())
+}
+
+fn build_smtp_transport(
+    input: &MailConnectionInput,
+) -> Result<AsyncSmtpTransport<Tokio1Executor>, String> {
+    let mut transport = AsyncSmtpTransport::<Tokio1Executor>::starttls_relay(&input.smtp_host)
+        .map_err(|_| "Invalid SMTP server address.".to_string())?
+        .port(input.smtp_port)
+        .credentials(Credentials::new(
+            input.username.clone(),
+            input
+                .oauth_access_token
+                .clone()
+                .unwrap_or_else(|| input.password.clone()),
+        ));
+    if input.oauth_access_token.is_some() {
+        transport = transport.authentication(vec![Mechanism::Xoauth2]);
+    }
+    Ok(transport.build::<Tokio1Executor>())
 }
 
 async fn fetch_message_source(
@@ -652,20 +661,7 @@ fn sanitize_html(value: String) -> String {
 }
 
 async fn test_smtp(input: &MailConnectionInput) -> Result<bool, String> {
-    let mut transport = AsyncSmtpTransport::<Tokio1Executor>::starttls_relay(&input.smtp_host)
-        .map_err(|_| "Invalid SMTP server address.".to_string())?
-        .port(input.smtp_port)
-        .credentials(Credentials::new(
-            input.username.clone(),
-            input
-                .oauth_access_token
-                .clone()
-                .unwrap_or_else(|| input.password.clone()),
-        ));
-    if input.oauth_access_token.is_some() {
-        transport = transport.authentication(vec![Mechanism::Xoauth2]);
-    }
-    let transport = transport.build::<Tokio1Executor>();
+    let transport = build_smtp_transport(input)?;
 
     within_timeout(transport.test_connection(), "SMTP server is unavailable.").await
 }

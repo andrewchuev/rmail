@@ -321,10 +321,13 @@ function App() {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.ctrlKey || e.metaKey) {
         if (e.key === "=" || e.key === "+") {
+          e.preventDefault();
           applyZoom(zoomLevel + 0.1);
         } else if (e.key === "-") {
+          e.preventDefault();
           applyZoom(zoomLevel - 0.1);
         } else if (e.key === "0") {
+          e.preventDefault();
           applyZoom(1.0);
         }
       }
@@ -332,6 +335,7 @@ function App() {
 
     const handleWheel = (e: WheelEvent) => {
       if (e.ctrlKey) {
+        e.preventDefault();
         applyZoom(zoomLevel - (e.deltaY > 0 ? 0.1 : -0.1));
       }
     };
@@ -794,7 +798,7 @@ function App() {
                 className="w-full rounded-lg border"
                 ref={htmlFrameRef}
                 referrerPolicy="no-referrer"
-                sandbox="allow-same-origin"
+                sandbox="allow-same-origin allow-popups allow-popups-to-escape-sandbox"
                 srcDoc={wrapEmailHtml(messageBody.html)}
                 style={{ minHeight: 200 }}
                 title="HTML message version"
