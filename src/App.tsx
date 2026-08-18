@@ -638,6 +638,15 @@ function App() {
     }
   }
 
+  async function handleCacheFlushed() {
+    setCachedMessages([]);
+    setMailboxes([]);
+    setSelectedMessageKey(null);
+    setSelectedMessageKeys(new Set());
+    setSyncRevision((current) => current + 1);
+    await syncAllAccounts();
+  }
+
   if (activeView === "settings") {
     return (
       <SettingsPage
@@ -647,6 +656,7 @@ function App() {
         onAddAccount={() => setAddingAccount(true)}
         onBack={() => setActiveView("mail")}
         onBackgroundSettingsChange={setBackgroundSettings}
+        onCacheFlushed={handleCacheFlushed}
       />
     );
   }

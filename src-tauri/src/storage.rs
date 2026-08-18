@@ -757,6 +757,25 @@ impl Database {
         self.get_account(account_id)
     }
 
+    /// Deletes every cached mailbox/message/body/attachment for every account
+    /// (accounts and drafts are untouched) and reclaims the freed disk space.
+    /// `messages` cascades to `message_bodies`, `message_attachments`, and
+    /// `message_html` via `ON DELETE CASCADE`.
+    pub fn flush_message_cache(&self) -> Result<(), String> {
+        let mut connection = self.connection.lock().map_err(|error| error.to_string())?;
+        let transaction = connection.transaction().map_err(|error| error.to_string())?;
+        transaction
+            .execute("DELETE FROM messages", [])
+            .map_err(|error| error.to_string())?;
+        transaction
+            .execute("DELETE FROM mailboxes", [])
+            .map_err(|error| error.to_string())?;
+        transaction.commit().map_err(|error| error.to_string())?;
+
+        connection
+            .execute_batch("VACUUM;")
+            .map_err(|error| error.to_string())
+    }
 
     fn initialize(&self) -> Result<(), String> {
         let connection = self.connection.lock().map_err(|error| error.to_string())?;
@@ -1383,5 +1402,90 @@ mod tests {
             .set_account_notifications(account.id, false)
             .expect("notifications should disable");
         assert!(!disabled.notifications_enabled);
+    }
+
+    #[test]
+    fn flushes_message_cache_but_keeps_accounts_and_drafts() {
+        let database = Database::in_memory().expect("database should initialize");
+        let account = database
+            .create_account(CreateAccountInput {
+                email: "hello@example.com".to_string(),
+                display_name: "RMail".to_string(),
+                imap_host: "imap.example.com".to_string(),
+                smtp_host: "smtp.example.com".to_string(),
+            })
+            .expect("account should be created");
+        database
+            .store_inbox_snapshot(
+                account.id,
+                &InboxSnapshot {
+                    mailboxes: vec![MailboxSnapshot {
+                        path: "INBOX".to_string(),
+                        uid_validity: Some(1),
+                    }],
+                    messages: vec![MessageSnapshot {
+                        mailbox_path: "INBOX".to_string(),
+                        uid: 1,
+                        sender: "Sender".to_string(),
+                        subject: "Subject".to_string(),
+                        date: "Today".to_string(),
+                        internal_date: 1,
+                        is_read: false,
+                    }],
+                },
+            )
+            .expect("snapshot should persist");
+        database
+            .store_message_body(
+                account.id,
+                "INBOX",
+                1,
+                &MessageBody {
+                    text: "Cached body".to_string(),
+                    html: Some("<p>Cached HTML</p>".to_string()),
+                    attachments: Vec::new(),
+                },
+            )
+            .expect("body should persist");
+        database
+            .save_draft(SaveDraftInput {
+                id: None,
+                account_id: account.id,
+                recipients: "person@example.com".to_string(),
+                subject: "Draft".to_string(),
+                body: "Draft body".to_string(),
+            })
+            .expect("draft should save");
+
+        database
+            .flush_message_cache()
+            .expect("cache should flush");
+
+        assert!(database
+            .list_cached_mailboxes(account.id)
+            .expect("mailboxes should list")
+            .is_empty());
+        assert!(database
+            .list_cached_messages(account.id, "INBOX")
+            .expect("messages should list")
+            .is_empty());
+        assert_eq!(
+            database
+                .get_cached_message_body(account.id, "INBOX", 1)
+                .expect("body should load"),
+            None
+        );
+        assert_eq!(
+            database
+                .list_accounts()
+                .expect("accounts should list")
+                .len(),
+            1
+        );
+        let connection = database.connection.lock().expect("connection should lock");
+        let draft_count: i64 = connection
+            .query_row("SELECT COUNT(*) FROM drafts", [], |row| row.get(0))
+            .expect("drafts should count");
+        assert_eq!(draft_count, 1);
     }
 }

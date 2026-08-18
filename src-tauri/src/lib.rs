@@ -604,6 +604,11 @@ async fn sync_account(
 
 
 #[tauri::command]
+fn flush_message_cache(state: tauri::State<'_, AppState>) -> Result<(), String> {
+    state.database.flush_message_cache()
+}
+
+#[tauri::command]
 fn set_tray_unread_state(app: tauri::AppHandle, has_unread: bool) -> Result<(), String> {
     println!("set_tray_unread_state called with has_unread: {}", has_unread);
     if let Some(tray) = app.tray_by_id("main-tray") {
@@ -749,6 +754,7 @@ pub fn run() {
             mark_message_read,
             mark_multiple_messages_read,
             delete_messages,
+            flush_message_cache,
             set_tray_unread_state
         ])
         .run(tauri::generate_context!())

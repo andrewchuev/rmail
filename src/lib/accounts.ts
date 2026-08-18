@@ -221,3 +221,7 @@ export async function setAccountNotifications(accountId: number, enabled: boolea
 export async function setTrayUnreadState(hasUnread: boolean): Promise<void> {
   return invoke<void>("set_tray_unread_state", { hasUnread });
 }
+
+export async function flushMessageCache(): Promise<void> {
+  return invoke<void>("flush_message_cache");
+}

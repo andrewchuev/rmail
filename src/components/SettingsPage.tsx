@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useState, type FormEvent } from "react";
-import { AppWindow, ArrowLeft, Bell, Clock3, Mail, Plus, Search } from "lucide-react";
+import { AppWindow, ArrowLeft, Bell, Clock3, Database, Mail, Plus, Search } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
+  flushMessageCache,
   reconnectGmail,
   renameAccount,
   setAccountNotifications,
@@ -23,6 +24,7 @@ type SettingsPageProps = {
   onAddAccount: () => void;
   onBack: () => void;
   onBackgroundSettingsChange: (settings: BackgroundSettings) => void;
+  onCacheFlushed: () => Promise<void>;
 };
 
 type SearchEntry = {
@@ -69,6 +71,12 @@ const generalEntries: SearchEntry[] = [
     description: "Start RMail automatically when you log in to your computer.",
     keywords: "general settings startup autostart boot login launch windows system",
   },
+  {
+    id: "flush-cache",
+    title: "Clear message cache",
+    description: "Delete all cached mailboxes, messages, and message bodies from this device.",
+    keywords: "clear flush database cache reset resync storage disk space wipe",
+  },
 ];
 
 function normalize(value: string) {
@@ -86,6 +94,51 @@ function scoreEntry(entry: SearchEntry, query: string) {
 
 function reasonMessage(reason: unknown, fallback: string) {
   return reason instanceof Error ? reason.message : String(reason || fallback);
+}
+
+function ClearCacheAction({ onCacheFlushed }: { onCacheFlushed: () => Promise<void> }) {
+  const [isConfirming, setConfirming] = useState(false);
+  const [isFlushing, setFlushing] = useState(false);
+  const [message, setMessage] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  async function handleConfirm() {
+    setError(null);
+    setMessage(null);
+    setFlushing(true);
+    try {
+      await flushMessageCache();
+      await onCacheFlushed();
+      setMessage("Message cache cleared. Accounts are resynchronizing.");
+    } catch (reason) {
+      setError(reasonMessage(reason, "Unable to clear the message cache."));
+    } finally {
+      setFlushing(false);
+      setConfirming(false);
+    }
+  }
+
+  return (
+    <label className="flex items-center gap-4 p-5" id="flush-cache">
+      <span className="grid size-10 shrink-0 place-items-center rounded-lg bg-destructive/10 text-destructive"><Database className="size-5" /></span>
+      <span className="min-w-0 flex-1">
+        <span className="block text-sm font-medium">Clear message cache</span>
+        <span className="mt-1 block text-sm text-muted-foreground">Delete all cached mailboxes, messages, and message bodies from this device. Accounts, passwords, and local drafts are kept; the next sync re-downloads everything.</span>
+        {message ? <span className="mt-2 block text-sm text-emerald-700 dark:text-emerald-400" role="status">{message}</span> : null}
+        {error ? <span className="mt-2 block text-sm text-destructive" role="alert">{error}</span> : null}
+      </span>
+      {isConfirming ? (
+        <div className="flex shrink-0 gap-2">
+          <Button disabled={isFlushing} onClick={() => void handleConfirm()} size="sm" type="button" variant="destructive">
+            {isFlushing ? "Clearing…" : "Confirm"}
+          </Button>
+          <Button disabled={isFlushing} onClick={() => setConfirming(false)} size="sm" type="button" variant="ghost">Cancel</Button>
+        </div>
+      ) : (
+        <Button className="shrink-0" onClick={() => setConfirming(true)} size="sm" type="button" variant="outline">Clear cache</Button>
+      )}
+    </label>
+  );
 }
 
 function AccountCredentialsEditor({
@@ -306,6 +359,7 @@ export function SettingsPage({
   onAddAccount,
   onBack,
   onBackgroundSettingsChange,
+  onCacheFlushed,
 }: SettingsPageProps) {
   const [query, setQuery] = useState("");
   const [autostartState, setAutostartState] = useState<boolean>(false);
@@ -439,6 +493,7 @@ export function SettingsPage({
                   <input checked={autostartState} onChange={(event) => handleAutostartToggle(event.target.checked)} type="checkbox" />
                 </label>
               ) : null}
+              {matchedIds.has("flush-cache") ? <ClearCacheAction onCacheFlushed={onCacheFlushed} /> : null}
             </div>
           </section>
         ) : null}
