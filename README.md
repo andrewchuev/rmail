@@ -16,7 +16,7 @@ RMail is a lightweight desktop email client built with Rust, Tauri 2, React, and
 - A classic expandable folder tree per account, and renameable account names (Gmail accounts default to "email (name)" to stay distinguishable).
 - Dynamic system tray icon indicating unread message status.
 - Sanitized HTML message rendering in a sandboxed iframe.
-- Clear message cache from Settings: wipes cached mailboxes/messages/bodies/attachments and reclaims disk space (`VACUUM`), without touching accounts, stored credentials, or local drafts.
+- Clear message cache from Settings: wipes cached mailboxes/messages/bodies/attachments and reclaims disk space (`VACUUM`), without touching accounts, stored credentials, or local drafts. Logs the mailbox/message counts cleared, since the UI immediately resynchronizes afterward and would otherwise look like a no-op.
 
 ## Architecture & Refactoring
 

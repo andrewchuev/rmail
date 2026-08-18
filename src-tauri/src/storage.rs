@@ -760,10 +760,17 @@ impl Database {
     /// Deletes every cached mailbox/message/body/attachment for every account
     /// (accounts and drafts are untouched) and reclaims the freed disk space.
     /// `messages` cascades to `message_bodies`, `message_attachments`, and
-    /// `message_html` via `ON DELETE CASCADE`.
-    pub fn flush_message_cache(&self) -> Result<(), String> {
+    /// `message_html` via `ON DELETE CASCADE`. Returns the (mailbox, message)
+    /// row counts that were cleared, for diagnostics logging by the caller.
+    pub fn flush_message_cache(&self) -> Result<(usize, usize), String> {
         let mut connection = self.connection.lock().map_err(|error| error.to_string())?;
         let transaction = connection.transaction().map_err(|error| error.to_string())?;
+        let mailbox_count: i64 = transaction
+            .query_row("SELECT COUNT(*) FROM mailboxes", [], |row| row.get(0))
+            .map_err(|error| error.to_string())?;
+        let message_count: i64 = transaction
+            .query_row("SELECT COUNT(*) FROM messages", [], |row| row.get(0))
+            .map_err(|error| error.to_string())?;
         transaction
             .execute("DELETE FROM messages", [])
             .map_err(|error| error.to_string())?;
@@ -774,7 +781,9 @@ impl Database {
 
         connection
             .execute_batch("VACUUM;")
-            .map_err(|error| error.to_string())
+            .map_err(|error| error.to_string())?;
+
+        Ok((mailbox_count as usize, message_count as usize))
     }
 
     fn initialize(&self) -> Result<(), String> {
@@ -1457,9 +1466,11 @@ mod tests {
             })
             .expect("draft should save");
 
-        database
+        let (flushed_mailboxes, flushed_messages) = database
             .flush_message_cache()
             .expect("cache should flush");
+        assert_eq!(flushed_mailboxes, 1);
+        assert_eq!(flushed_messages, 1);
 
         assert!(database
             .list_cached_mailboxes(account.id)

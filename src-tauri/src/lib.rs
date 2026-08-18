@@ -605,7 +605,19 @@ async fn sync_account(
 
 #[tauri::command]
 fn flush_message_cache(state: tauri::State<'_, AppState>) -> Result<(), String> {
-    state.database.flush_message_cache()
+    tauri_plugin_log::log::info!("flush_message_cache started");
+    match state.database.flush_message_cache() {
+        Ok((mailbox_count, message_count)) => {
+            tauri_plugin_log::log::info!(
+                "flush_message_cache completed: cleared {mailbox_count} mailboxes, {message_count} messages"
+            );
+            Ok(())
+        }
+        Err(error) => {
+            tauri_plugin_log::log::error!("flush_message_cache failed: {error}");
+            Err(error)
+        }
+    }
 }
 
 #[tauri::command]
