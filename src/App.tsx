@@ -810,7 +810,13 @@ function App() {
                 referrerPolicy="no-referrer"
                 sandbox="allow-same-origin allow-popups allow-popups-to-escape-sandbox"
                 srcDoc={wrapEmailHtml(messageBody.html)}
-                style={{ minHeight: 200 }}
+                // content-box: frame.style.height below is set to match the inner
+                // document's scrollHeight exactly. Under the app's default border-box
+                // sizing, the 1px border would eat into that budget, leaving the inner
+                // document ~2px too tall for its own iframe - a persistent few-pixel
+                // inner scrollbar that isn't fixed by re-measuring (it's not a timing
+                // issue, the shortfall is deterministic).
+                style={{ minHeight: 200, boxSizing: "content-box" }}
                 title="HTML message version"
               />
             </div>
