@@ -164,10 +164,10 @@ pub async fn sync_mailboxes(
     let input = validate_input(input)?;
     let mut guard = pool.checkout(account_id).await;
 
-    if let Some(session) = guard.as_mut() {
-        if let Ok(snapshot) = sync_via_session(session).await {
-            return Ok(snapshot);
-        }
+    if let Some(session) = guard.as_mut()
+        && let Ok(snapshot) = sync_via_session(session).await
+    {
+        return Ok(snapshot);
     }
     *guard = Some(connect_session(&input).await?);
     let session = guard.as_mut().expect("session was just connected");
@@ -343,10 +343,10 @@ async fn fetch_message_source(
     }
 
     let mut guard = pool.checkout(account_id).await;
-    if let Some(session) = guard.as_mut() {
-        if let Ok(source) = fetch_source_via_session(session, mailbox_path, uid).await {
-            return Ok(source);
-        }
+    if let Some(session) = guard.as_mut()
+        && let Ok(source) = fetch_source_via_session(session, mailbox_path, uid).await
+    {
+        return Ok(source);
     }
     *guard = Some(connect_session(&input).await?);
     let session = guard.as_mut().expect("session was just connected");
@@ -733,10 +733,10 @@ pub async fn mark_message_read(
     let input = validate_input(input)?;
     let mut guard = pool.checkout(account_id).await;
     let uid = uid.to_string();
-    if let Some(session) = guard.as_mut() {
-        if store_seen_flag(session, mailbox_path, uid.clone()).await.is_ok() {
-            return Ok(());
-        }
+    if let Some(session) = guard.as_mut()
+        && store_seen_flag(session, mailbox_path, uid.clone()).await.is_ok()
+    {
+        return Ok(());
     }
     *guard = Some(connect_session(&input).await?);
     let session = guard.as_mut().expect("session was just connected");
@@ -762,10 +762,10 @@ pub async fn mark_messages_read_bulk(
     let input = validate_input(input)?;
     let uid_set = uids.iter().map(|u| u.to_string()).collect::<Vec<_>>().join(",");
     let mut guard = pool.checkout(account_id).await;
-    if let Some(session) = guard.as_mut() {
-        if store_seen_flag(session, mailbox_path, uid_set.clone()).await.is_ok() {
-            return Ok(());
-        }
+    if let Some(session) = guard.as_mut()
+        && store_seen_flag(session, mailbox_path, uid_set.clone()).await.is_ok()
+    {
+        return Ok(());
     }
     *guard = Some(connect_session(&input).await?);
     let session = guard.as_mut().expect("session was just connected");
@@ -812,10 +812,10 @@ pub async fn delete_messages(
     let input = validate_input(input)?;
     let uid_set = uids.iter().map(|u| u.to_string()).collect::<Vec<_>>().join(",");
     let mut guard = pool.checkout(account_id).await;
-    if let Some(session) = guard.as_mut() {
-        if delete_via_session(session, mailbox_path, &uid_set).await.is_ok() {
-            return Ok(());
-        }
+    if let Some(session) = guard.as_mut()
+        && delete_via_session(session, mailbox_path, &uid_set).await.is_ok()
+    {
+        return Ok(());
     }
     *guard = Some(connect_session(&input).await?);
     let session = guard.as_mut().expect("session was just connected");

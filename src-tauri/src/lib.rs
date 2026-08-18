@@ -159,24 +159,33 @@ async fn mark_message_read(
     Ok(())
 }
 
+/// Identifies a single cached message by account, mailbox, and IMAP UID.
+/// Shared by every command that operates on a batch of messages, since the
+/// frontend sends the same `MessageRef` shape for all of them.
 #[derive(serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
-struct MarkMultipleMessagesReadInput {
+struct MessageLocator {
     account_id: i64,
     mailbox_path: String,
     uid: u32,
 }
 
-#[tauri::command]
-async fn mark_multiple_messages_read(
-    messages: Vec<MarkMultipleMessagesReadInput>,
-    state: tauri::State<'_, AppState>,
-) -> Result<(), String> {
-    // Group by (account_id, mailbox_path)
+/// Groups message locators by (account, mailbox) so a batch operation issues
+/// one IMAP command per mailbox instead of one per message.
+fn group_by_mailbox(messages: Vec<MessageLocator>) -> HashMap<(i64, String), Vec<u32>> {
     let mut groups: HashMap<(i64, String), Vec<u32>> = HashMap::new();
     for msg in messages {
         groups.entry((msg.account_id, msg.mailbox_path)).or_default().push(msg.uid);
     }
+    groups
+}
+
+#[tauri::command]
+async fn mark_multiple_messages_read(
+    messages: Vec<MessageLocator>,
+    state: tauri::State<'_, AppState>,
+) -> Result<(), String> {
+    let groups = group_by_mailbox(messages);
 
     let mut sync_errors = Vec::new();
     for ((account_id, mailbox_path), uids) in groups {
@@ -212,24 +221,12 @@ async fn mark_multiple_messages_read(
     }
 }
 
-#[derive(serde::Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct DeleteMessagesInput {
-    account_id: i64,
-    mailbox_path: String,
-    uid: u32,
-}
-
 #[tauri::command]
 async fn delete_messages(
-    messages: Vec<DeleteMessagesInput>,
+    messages: Vec<MessageLocator>,
     state: tauri::State<'_, AppState>,
 ) -> Result<(), String> {
-    // Group by (account_id, mailbox_path)
-    let mut groups: HashMap<(i64, String), Vec<u32>> = HashMap::new();
-    for msg in messages {
-        groups.entry((msg.account_id, msg.mailbox_path)).or_default().push(msg.uid);
-    }
+    let groups = group_by_mailbox(messages);
 
     let mut sync_errors = Vec::new();
     for ((account_id, mailbox_path), uids) in groups {
@@ -645,7 +642,7 @@ fn remove_notification_exclusion(
 
 #[tauri::command]
 fn set_tray_unread_state(app: tauri::AppHandle, has_unread: bool) -> Result<(), String> {
-    println!("set_tray_unread_state called with has_unread: {}", has_unread);
+    tauri_plugin_log::log::debug!("set_tray_unread_state called with has_unread: {has_unread}");
     if let Some(tray) = app.tray_by_id("main-tray") {
         let icon = if has_unread {
             tauri::image::Image::from_bytes(include_bytes!("../icons/icon-unread.png"))
@@ -732,11 +729,10 @@ pub fn run() {
                         button_state: MouseButtonState::Up,
                         ..
                     } = event
+                        && let Some(window) = tray.app_handle().get_webview_window("main")
                     {
-                        if let Some(window) = tray.app_handle().get_webview_window("main") {
-                            let _ = window.show();
-                            let _ = window.set_focus();
-                        }
+                        let _ = window.show();
+                        let _ = window.set_focus();
                     }
                 })
                 .build(app)?;
