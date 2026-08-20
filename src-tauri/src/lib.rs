@@ -20,8 +20,16 @@ use storage::{
 use tauri::{
     menu::{Menu, MenuItem, PredefinedMenuItem},
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
-    Emitter, Manager, WindowEvent,
+    webview::NewWindowResponse,
+    Emitter, Manager, WebviewUrl, WebviewWindowBuilder, WindowEvent,
 };
+
+/// URL schemes allowed to be handed off to the OS's default handler when a
+/// link inside an HTML message is clicked. Keeps a malicious message from
+/// triggering an arbitrary installed protocol handler (e.g. a custom scheme
+/// registered by some other app) via the sandboxed iframe's `target="_blank"`
+/// links - only ordinary web links are ever opened.
+const ALLOWED_EXTERNAL_URL_SCHEMES: &[&str] = &["http", "https"];
 
 struct AppState {
     database: Database,
@@ -687,10 +695,29 @@ pub fn run() {
             Some(vec!["--minimized"]),
         ))
         .setup(|app| {
+            // Built programmatically (rather than declared in tauri.conf.json) so
+            // on_new_window can intercept links clicked inside the sandboxed HTML
+            // message iframe - a link's `target="_blank"` triggers this hook even
+            // though the iframe has no `allow-scripts`, since it's handled by the
+            // webview engine, not injected JS. Matching schemes are handed off to
+            // the OS's default browser via `open`; the in-app popup is denied.
+            WebviewWindowBuilder::new(app, "main", WebviewUrl::App("index.html".into()))
+                .title("RMail")
+                .inner_size(1180.0, 760.0)
+                .min_inner_size(920.0, 620.0)
+                .visible(false)
+                .on_new_window(|url, _features| {
+                    if ALLOWED_EXTERNAL_URL_SCHEMES.contains(&url.scheme()) {
+                        let _ = open::that(url.as_str());
+                    }
+                    NewWindowResponse::Deny
+                })
+                .build()?;
+
             let app_data_dir = app.path().app_local_data_dir()?;
             let database_path = app_data_dir.join("rmail.sqlite3");
             let database = Database::open(&database_path).map_err(std::io::Error::other)?;
-            
+
             use tauri_plugin_autostart::ManagerExt;
             let is_autostart = app.autolaunch().is_enabled().unwrap_or(false);
             
