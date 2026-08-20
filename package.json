@@ -1,6 +1,6 @@
 {
   "name": "rmail",
-  "version": "0.1.18",
+  "version": "0.1.19",
   "description": "A lightweight desktop email client.",
   "type": "module",
   "scripts": {
