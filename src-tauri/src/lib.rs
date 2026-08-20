@@ -658,6 +658,14 @@ fn set_tray_unread_state(app: tauri::AppHandle, has_unread: bool) -> Result<(), 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        // Must be registered first: it needs to intercept a second launch
+        // before any other plugin/window setup runs.
+        .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
+            if let Some(window) = app.get_webview_window("main") {
+                let _ = window.show();
+                let _ = window.set_focus();
+            }
+        }))
         .plugin(tauri_plugin_window_state::Builder::new().build())
         .plugin(
             tauri_plugin_log::Builder::new()

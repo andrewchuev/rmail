@@ -1,6 +1,6 @@
 [package]
 name = "rmail"
-version = "0.1.18"
+version = "0.1.19"
 description = "A lightweight desktop email client."
 edition = "2024"
 default-run = "rmail"
@@ -39,3 +39,4 @@ tauri-plugin-autostart = "2.5.1"
 
 [target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]
 tauri-plugin-window-state = "2"
+tauri-plugin-single-instance = "2"
