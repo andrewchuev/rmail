@@ -58,6 +58,8 @@ export type NotificationExclusion = {
 export type MessageBody = {
   text: string;
   html: string | null;
+  to: string;
+  cc: string | null;
   attachments: AttachmentMetadata[];
 };
 

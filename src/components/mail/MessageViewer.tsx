@@ -1,9 +1,10 @@
-import { useEffect, useRef } from "react";
-import { Paperclip } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
+import { ChevronDown, Paperclip } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import type { CachedMessage, MessageBody } from "@/lib/accounts";
-import { folderLabel, wrapEmailHtml } from "@/lib/utils";
+import { folderLabel, messageKey, wrapEmailHtml } from "@/lib/utils";
 
 export function MessageViewer({
   attachmentMessage,
@@ -27,6 +28,11 @@ export function MessageViewer({
   savingAttachmentPosition: number | null;
 }) {
   const htmlFrameRef = useRef<HTMLIFrameElement>(null);
+  const [detailsOpen, setDetailsOpen] = useState(false);
+
+  useEffect(() => {
+    setDetailsOpen(false);
+  }, [message ? messageKey(message) : null]);
 
   // Keeps the HTML message iframe sized to fit its content so the outer pane
   // is the only scroll container. A one-off measurement on "load" isn't
@@ -82,7 +88,39 @@ export function MessageViewer({
                 <div className="flex items-start gap-3">
                   <div>
                     <h2 className="text-xl font-semibold tracking-tight">{message.subject}</h2>
-                    <p className="mt-2 text-sm font-medium">{message.sender}</p>
+                    <Popover onOpenChange={setDetailsOpen} open={detailsOpen}>
+                      <PopoverTrigger asChild>
+                        <button
+                          aria-label="Show message details"
+                          className="mt-2 flex items-center gap-1 text-sm font-medium hover:text-foreground/70"
+                          type="button"
+                        >
+                          {message.sender}
+                          <ChevronDown className="size-3.5 text-muted-foreground" />
+                        </button>
+                      </PopoverTrigger>
+                      <PopoverContent align="start" className="w-96">
+                        <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1.5">
+                          <dt className="text-muted-foreground">From</dt>
+                          <dd className="truncate">
+                            <span className="font-medium">{message.sender}</span>
+                            {message.senderEmail ? ` <${message.senderEmail}>` : ""}
+                          </dd>
+                          <dt className="text-muted-foreground">To</dt>
+                          <dd className="truncate">{messageBody?.to || (isBodyLoading ? "Loading…" : "—")}</dd>
+                          {messageBody?.cc ? (
+                            <>
+                              <dt className="text-muted-foreground">Cc</dt>
+                              <dd className="truncate">{messageBody.cc}</dd>
+                            </>
+                          ) : null}
+                          <dt className="text-muted-foreground">Date</dt>
+                          <dd>{message.date}</dd>
+                          <dt className="text-muted-foreground">Subject</dt>
+                          <dd className="truncate">{message.subject}</dd>
+                        </dl>
+                      </PopoverContent>
+                    </Popover>
                     <p className="text-sm text-muted-foreground">{message.accountDisplayName} · {folderLabel(message.mailboxPath)}</p>
                   </div>
                   <time className="ml-auto shrink-0 text-xs text-muted-foreground">{message.date}</time>

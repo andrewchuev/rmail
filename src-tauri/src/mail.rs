@@ -8,7 +8,7 @@ use lettre::{
     transport::smtp::authentication::{Credentials, Mechanism},
     AsyncSmtpTransport, AsyncTransport, Tokio1Executor,
 };
-use mailparse::{parse_mail, DispositionType, ParsedMail};
+use mailparse::{parse_mail, DispositionType, MailHeaderMap, ParsedMail};
 use serde::{Deserialize, Serialize};
 use tokio::{io::AsyncWriteExt, net::TcpStream, time::timeout};
 
@@ -95,6 +95,8 @@ pub struct InboxSnapshot {
 pub struct MessageBody {
     pub text: String,
     pub html: Option<String>,
+    pub to: String,
+    pub cc: Option<String>,
     pub attachments: Vec<AttachmentMetadata>,
 }
 
@@ -554,10 +556,14 @@ fn parse_message(source: &[u8]) -> Result<MessageBody, String> {
             attachment
         })
         .collect();
+    let to = parsed.headers.get_first_value("To").unwrap_or_default();
+    let cc = parsed.headers.get_first_value("Cc");
 
     Ok(MessageBody {
         text,
         html,
+        to,
+        cc,
         attachments,
     })
 }
@@ -994,6 +1000,26 @@ mod tests {
         assert!(!html.contains("script"));
         // Images are intentionally allowed (see sanitize_html) - no tracking-pixel blocking.
         assert!(html.contains("<img src=\"https://example.test/logo.png\""));
+    }
+
+    #[test]
+    fn extracts_to_and_cc_recipients_from_headers() {
+        let message = parse_message(
+            b"To: Jane Doe <jane@example.com>, john@example.com\r\nCc: Team <team@example.com>\r\nContent-Type: text/plain\r\n\r\nBody\r\n",
+        )
+        .expect("message should parse");
+
+        assert_eq!(message.to, "Jane Doe <jane@example.com>, john@example.com");
+        assert_eq!(message.cc, Some("Team <team@example.com>".to_string()));
+    }
+
+    #[test]
+    fn defaults_to_and_cc_when_headers_are_absent() {
+        let message = parse_message(b"Content-Type: text/plain\r\n\r\nBody\r\n")
+            .expect("message should parse");
+
+        assert_eq!(message.to, "");
+        assert_eq!(message.cc, None);
     }
 
     #[test]

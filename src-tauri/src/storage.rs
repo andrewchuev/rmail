@@ -325,12 +325,18 @@ impl Database {
         uid: u32,
     ) -> Result<Option<MessageBody>, String> {
         let connection = self.connection.lock().map_err(|error| error.to_string())?;
-        let text = connection
+        let body_row = connection
             .query_row(
-                "SELECT body FROM message_bodies
+                "SELECT body, to_recipients, cc_recipients FROM message_bodies
                  WHERE account_id = ?1 AND mailbox_path = ?2 AND uid = ?3",
                 params![account_id, mailbox_path, uid],
-                |row| row.get(0),
+                |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, String>(1)?,
+                        row.get::<_, Option<String>>(2)?,
+                    ))
+                },
             )
             .map(Some)
             .or_else(|error| match error {
@@ -339,7 +345,7 @@ impl Database {
             })
             .map_err(|error| error.to_string())?;
 
-        let Some(text) = text else {
+        let Some((text, to, cc)) = body_row else {
             return Ok(None);
         };
         let mut statement = connection
@@ -380,6 +386,8 @@ impl Database {
         Ok(Some(MessageBody {
             text,
             html,
+            to,
+            cc,
             attachments,
         }))
     }
@@ -397,12 +405,14 @@ impl Database {
             .map_err(|error| error.to_string())?;
         transaction
             .execute(
-                "INSERT INTO message_bodies (account_id, mailbox_path, uid, body, cached_at)
-                 VALUES (?1, ?2, ?3, ?4, CURRENT_TIMESTAMP)
+                "INSERT INTO message_bodies (account_id, mailbox_path, uid, body, to_recipients, cc_recipients, cached_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, CURRENT_TIMESTAMP)
                  ON CONFLICT(account_id, mailbox_path, uid) DO UPDATE SET
                    body = excluded.body,
+                   to_recipients = excluded.to_recipients,
+                   cc_recipients = excluded.cc_recipients,
                    cached_at = CURRENT_TIMESTAMP",
-                params![account_id, mailbox_path, uid, body.text],
+                params![account_id, mailbox_path, uid, body.text, body.to, body.cc],
             )
             .map_err(|error| error.to_string())?;
         transaction
@@ -971,7 +981,14 @@ impl Database {
             "messages",
             "sender_email",
             "TEXT NOT NULL DEFAULT ''",
-        )
+        )?;
+        add_column_if_missing(
+            &connection,
+            "message_bodies",
+            "to_recipients",
+            "TEXT NOT NULL DEFAULT ''",
+        )?;
+        add_column_if_missing(&connection, "message_bodies", "cc_recipients", "TEXT")
     }
 
     #[cfg(test)]
@@ -1202,6 +1219,8 @@ mod tests {
                 &MessageBody {
                     text: "Cached body".to_string(),
                     html: Some("<p>Cached HTML</p>".to_string()),
+                    to: "person@example.com".to_string(),
+                    cc: None,
                     attachments: Vec::new(),
                 },
             )
@@ -1213,6 +1232,8 @@ mod tests {
             Some(MessageBody {
                 text: "Cached body".to_string(),
                 html: Some("<p>Cached HTML</p>".to_string()),
+                to: "person@example.com".to_string(),
+                cc: None,
                 attachments: Vec::new(),
             })
         );
@@ -1366,6 +1387,8 @@ mod tests {
                 &MessageBody {
                     text: "Cached body".to_string(),
                     html: None,
+                    to: "person@example.com".to_string(),
+                    cc: None,
                     attachments: Vec::new(),
                 },
             )
@@ -1435,6 +1458,8 @@ mod tests {
                 &MessageBody {
                     text: "Cached body".to_string(),
                     html: None,
+                    to: "person@example.com".to_string(),
+                    cc: None,
                     attachments: Vec::new(),
                 },
             )
@@ -1549,6 +1574,8 @@ mod tests {
                 &MessageBody {
                     text: "Cached body".to_string(),
                     html: Some("<p>Cached HTML</p>".to_string()),
+                    to: "person@example.com".to_string(),
+                    cc: None,
                     attachments: Vec::new(),
                 },
             )
