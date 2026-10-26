@@ -59,6 +59,10 @@ npm run release
 
 Bumps the patch version across all five files, then runs `tauri build`.
 
+### Releases
+
+Pushing a tag matching `v*.*.*` runs `.github/workflows/release.yml`, which builds portable (no-installer) artifacts for Windows (`.zip`), macOS (universal `.app.zip`), and Linux (`.AppImage`) and attaches them to a draft GitHub Release. Requires the `RMAIL_GOOGLE_CLIENT_ID`/`RMAIL_GOOGLE_CLIENT_SECRET` repo secrets for Gmail OAuth to work in the built app.
+
 ## Current limitations
 
 - Outgoing attachments, HTML composition, and IMAP Sent-folder copies are not implemented.

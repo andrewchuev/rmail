@@ -1,0 +1,159 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+env:
+  RMAIL_GOOGLE_CLIENT_ID: ${{ secrets.RMAIL_GOOGLE_CLIENT_ID }}
+  RMAIL_GOOGLE_CLIENT_SECRET: ${{ secrets.RMAIL_GOOGLE_CLIENT_SECRET }}
+
+jobs:
+  windows:
+    name: Windows portable
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - run: npm ci
+
+      - name: Build (no installer)
+        run: npm run tauri build -- --no-bundle
+
+      - name: Package portable zip
+        shell: pwsh
+        run: |
+          $version = "${{ github.ref_name }}" -replace '^v', ''
+          $dest = "RMail-$version-windows-x64-portable"
+          New-Item -ItemType Directory -Path $dest | Out-Null
+          Copy-Item src-tauri/target/release/rmail.exe "$dest/RMail.exe"
+          Compress-Archive -Path "$dest/*" -DestinationPath "$dest.zip"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-portable
+          path: RMail-*-windows-x64-portable.zip
+
+      - name: Attach to release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          draft: true
+          files: RMail-*-windows-x64-portable.zip
+          fail_on_unmatched_files: true
+
+  macos:
+    name: macOS portable (universal)
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin,x86_64-apple-darwin
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - run: npm ci
+
+      - name: Build universal app bundle (no installer/DMG)
+        run: npm run tauri build -- --target universal-apple-darwin --bundles app
+
+      - name: Package portable zip
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          ditto -c -k --sequesterRsrc --keepParent \
+            "src-tauri/target/universal-apple-darwin/release/bundle/macos/RMail.app" \
+            "RMail-${version}-macos-universal-portable.zip"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: macos-portable
+          path: RMail-*-macos-universal-portable.zip
+
+      - name: Attach to release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          draft: true
+          files: RMail-*-macos-universal-portable.zip
+          fail_on_unmatched_files: true
+
+  linux:
+    name: Linux portable (AppImage)
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - name: Install Linux build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            libayatana-appindicator3-dev \
+            librsvg2-dev \
+            patchelf \
+            build-essential \
+            libssl-dev \
+            libgtk-3-dev
+
+      - run: npm ci
+
+      - name: Build AppImage (no deb/rpm)
+        run: npm run tauri build -- --bundles appimage
+
+      - name: Rename AppImage
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          src=$(find src-tauri/target/release/bundle/appimage -maxdepth 1 -name '*.AppImage' | head -n1)
+          cp "$src" "RMail-${version}-linux-x86_64.AppImage"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux-portable
+          path: RMail-*-linux-x86_64.AppImage
+
+      - name: Attach to release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          draft: true
+          files: RMail-*-linux-x86_64.AppImage
+          fail_on_unmatched_files: true
