@@ -381,6 +381,12 @@ impl Database {
         let Some((text, to, cc, message_id, references, reply_to)) = body_row else {
             return Ok(None);
         };
+        // Rows cached before the message_id/references_header/reply_to columns existed have
+        // message_id NULL; treating that as a cache miss self-heals them via a one-time
+        // refetch (RFC 5322 Message-ID is near-universal, so this rarely affects real mail).
+        if message_id.is_none() {
+            return Ok(None);
+        }
         let mut statement = connection
             .prepare(
                 "SELECT position, name, mime_type, size
@@ -1280,7 +1286,7 @@ mod tests {
                     to: "person@example.com".to_string(),
                     cc: None,
                     attachments: Vec::new(),
-                    message_id: None,
+                    message_id: Some("<cached@example.com>".to_string()),
                     references: None,
                     reply_to: None,
                 },
@@ -1296,7 +1302,7 @@ mod tests {
                 to: "person@example.com".to_string(),
                 cc: None,
                 attachments: Vec::new(),
-                message_id: None,
+                message_id: Some("<cached@example.com>".to_string()),
                 references: None,
                 reply_to: None,
             })
@@ -1322,6 +1328,64 @@ mod tests {
                 .expect("sent messages should list")
                 .len(),
             1
+        );
+    }
+
+    #[test]
+    fn treats_body_cached_before_message_id_column_as_a_cache_miss() {
+        let database = Database::in_memory().expect("database should initialize");
+        let account = database
+            .create_account(CreateAccountInput {
+                email: "hello@example.com".to_string(),
+                display_name: "RMail".to_string(),
+                imap_host: "imap.example.com".to_string(),
+                smtp_host: "smtp.example.com".to_string(),
+            })
+            .expect("account should be created");
+        database
+            .store_inbox_snapshot(
+                account.id,
+                &InboxSnapshot {
+                    mailboxes: vec![MailboxSnapshot {
+                        path: "INBOX".to_string(),
+                        uid_validity: Some(1),
+                    }],
+                    messages: vec![MessageSnapshot {
+                        mailbox_path: "INBOX".to_string(),
+                        uid: 1,
+                        sender: "Sender".to_string(),
+                        sender_email: "sender@example.com".to_string(),
+                        subject: "Subject".to_string(),
+                        date: "Today".to_string(),
+                        internal_date: 1,
+                        is_read: false,
+                    }],
+                },
+            )
+            .expect("snapshot should persist");
+        database
+            .store_message_body(
+                account.id,
+                "INBOX",
+                1,
+                &MessageBody {
+                    text: "Cached before the migration".to_string(),
+                    html: None,
+                    to: "person@example.com".to_string(),
+                    cc: None,
+                    attachments: Vec::new(),
+                    message_id: None,
+                    references: None,
+                    reply_to: None,
+                },
+            )
+            .expect("body should persist");
+
+        assert_eq!(
+            database
+                .get_cached_message_body(account.id, "INBOX", 1)
+                .expect("lookup should not error"),
+            None
         );
     }
 
