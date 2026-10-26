@@ -63,6 +63,7 @@ export type MessageBody = {
   attachments: AttachmentMetadata[];
   messageId: string | null;
   references: string | null;
+  replyTo: string | null;
 };
 
 export type AttachmentMetadata = {

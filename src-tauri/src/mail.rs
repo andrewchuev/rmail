@@ -100,6 +100,7 @@ pub struct MessageBody {
     pub attachments: Vec<AttachmentMetadata>,
     pub message_id: Option<String>,
     pub references: Option<String>,
+    pub reply_to: Option<String>,
 }
 
 #[derive(Debug, PartialEq, Serialize)]
@@ -565,6 +566,7 @@ fn parse_message(source: &[u8]) -> Result<MessageBody, String> {
     let cc = parsed.headers.get_first_value("Cc");
     let message_id = parsed.headers.get_first_value("Message-ID");
     let references = parsed.headers.get_first_value("References");
+    let reply_to = parsed.headers.get_first_value("Reply-To");
 
     Ok(MessageBody {
         text,
@@ -573,6 +575,7 @@ fn parse_message(source: &[u8]) -> Result<MessageBody, String> {
         cc,
         message_id,
         references,
+        reply_to,
         attachments,
     })
 }
@@ -1042,6 +1045,17 @@ mod tests {
 
         assert_eq!(message.to, "");
         assert_eq!(message.cc, None);
+        assert_eq!(message.reply_to, None);
+    }
+
+    #[test]
+    fn extracts_reply_to_when_it_differs_from_from() {
+        let message = parse_message(
+            b"From: Notifications <notifications@example.com>\r\nReply-To: Anna <anna@example.com>\r\nContent-Type: text/plain\r\n\r\nBody\r\n",
+        )
+        .expect("message should parse");
+
+        assert_eq!(message.reply_to, Some("Anna <anna@example.com>".to_string()));
     }
 
     #[test]

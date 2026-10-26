@@ -565,10 +565,14 @@ function App() {
     setComposeOpen(true);
   }
 
+  function resolveReplyRecipient(message: CachedMessage, body: MessageBody | null): string {
+    return body?.replyTo?.trim() || message.senderEmail || message.sender;
+  }
+
   async function handleReplyToMessage(message: CachedMessage) {
     const body = await getBodyForMessage(message);
     openComposeFor(message, {
-      recipients: message.senderEmail || message.sender,
+      recipients: resolveReplyRecipient(message, body),
       subject: /^re:/i.test(message.subject) ? message.subject : `Re: ${message.subject}`,
       body: body ? `\n\n${quoteMessageBody(message, body)}` : "",
       inReplyTo: body?.messageId ?? null,
@@ -579,9 +583,12 @@ function App() {
   async function handleReplyAllToMessage(message: CachedMessage) {
     const account = accountList.find((item) => item.id === message.accountId);
     const body = await getBodyForMessage(message);
-    const recipients = message.senderEmail || message.sender;
+    const recipients = resolveReplyRecipient(message, body);
     const cc = body
-      ? mergeRecipientLists([body.to, body.cc], [recipients, account?.email ?? ""])
+      ? mergeRecipientLists(
+          [body.to, body.cc],
+          [recipients, message.senderEmail, account?.email ?? ""],
+        )
       : "";
     openComposeFor(message, {
       recipients,

@@ -356,7 +356,8 @@ impl Database {
         let connection = self.connection.lock().map_err(|error| error.to_string())?;
         let body_row = connection
             .query_row(
-                "SELECT body, to_recipients, cc_recipients, message_id, references_header FROM message_bodies
+                "SELECT body, to_recipients, cc_recipients, message_id, references_header, reply_to
+                 FROM message_bodies
                  WHERE account_id = ?1 AND mailbox_path = ?2 AND uid = ?3",
                 params![account_id, mailbox_path, uid],
                 |row| {
@@ -366,6 +367,7 @@ impl Database {
                         row.get::<_, Option<String>>(2)?,
                         row.get::<_, Option<String>>(3)?,
                         row.get::<_, Option<String>>(4)?,
+                        row.get::<_, Option<String>>(5)?,
                     ))
                 },
             )
@@ -376,7 +378,7 @@ impl Database {
             })
             .map_err(|error| error.to_string())?;
 
-        let Some((text, to, cc, message_id, references)) = body_row else {
+        let Some((text, to, cc, message_id, references, reply_to)) = body_row else {
             return Ok(None);
         };
         let mut statement = connection
@@ -422,6 +424,7 @@ impl Database {
             attachments,
             message_id,
             references,
+            reply_to,
         }))
     }
 
@@ -438,14 +441,15 @@ impl Database {
             .map_err(|error| error.to_string())?;
         transaction
             .execute(
-                "INSERT INTO message_bodies (account_id, mailbox_path, uid, body, to_recipients, cc_recipients, message_id, references_header, cached_at)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, CURRENT_TIMESTAMP)
+                "INSERT INTO message_bodies (account_id, mailbox_path, uid, body, to_recipients, cc_recipients, message_id, references_header, reply_to, cached_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, CURRENT_TIMESTAMP)
                  ON CONFLICT(account_id, mailbox_path, uid) DO UPDATE SET
                    body = excluded.body,
                    to_recipients = excluded.to_recipients,
                    cc_recipients = excluded.cc_recipients,
                    message_id = excluded.message_id,
                    references_header = excluded.references_header,
+                   reply_to = excluded.reply_to,
                    cached_at = CURRENT_TIMESTAMP",
                 params![
                     account_id,
@@ -455,7 +459,8 @@ impl Database {
                     body.to,
                     body.cc,
                     body.message_id,
-                    body.references
+                    body.references,
+                    body.reply_to
                 ],
             )
             .map_err(|error| error.to_string())?;
@@ -1035,6 +1040,7 @@ impl Database {
         add_column_if_missing(&connection, "message_bodies", "cc_recipients", "TEXT")?;
         add_column_if_missing(&connection, "message_bodies", "message_id", "TEXT")?;
         add_column_if_missing(&connection, "message_bodies", "references_header", "TEXT")?;
+        add_column_if_missing(&connection, "message_bodies", "reply_to", "TEXT")?;
         add_column_if_missing(&connection, "drafts", "cc", "TEXT NOT NULL DEFAULT ''")?;
         add_column_if_missing(&connection, "drafts", "in_reply_to", "TEXT")?;
         add_column_if_missing(&connection, "drafts", "references_header", "TEXT")
@@ -1276,6 +1282,7 @@ mod tests {
                     attachments: Vec::new(),
                     message_id: None,
                     references: None,
+                    reply_to: None,
                 },
             )
             .expect("body should persist");
@@ -1291,6 +1298,7 @@ mod tests {
                 attachments: Vec::new(),
                 message_id: None,
                 references: None,
+                reply_to: None,
             })
         );
 
@@ -1454,6 +1462,7 @@ mod tests {
                     attachments: Vec::new(),
                     message_id: None,
                     references: None,
+                    reply_to: None,
                 },
             )
             .expect("body should persist");
@@ -1527,6 +1536,7 @@ mod tests {
                     attachments: Vec::new(),
                     message_id: None,
                     references: None,
+                    reply_to: None,
                 },
             )
             .expect("body should persist");
@@ -1645,6 +1655,7 @@ mod tests {
                     attachments: Vec::new(),
                     message_id: None,
                     references: None,
+                    reply_to: None,
                 },
             )
             .expect("body should persist");
