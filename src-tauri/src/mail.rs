@@ -98,6 +98,8 @@ pub struct MessageBody {
     pub to: String,
     pub cc: Option<String>,
     pub attachments: Vec<AttachmentMetadata>,
+    pub message_id: Option<String>,
+    pub references: Option<String>,
 }
 
 #[derive(Debug, PartialEq, Serialize)]
@@ -113,8 +115,11 @@ pub struct AttachmentMetadata {
 #[serde(rename_all = "camelCase")]
 pub struct OutgoingMessageInput {
     pub recipients: String,
+    pub cc: String,
     pub subject: String,
     pub body: String,
+    pub in_reply_to: Option<String>,
+    pub references: Option<String>,
 }
 
 pub async fn test_connection(input: MailConnectionInput) -> Result<MailConnectionStatus, String> {
@@ -558,12 +563,16 @@ fn parse_message(source: &[u8]) -> Result<MessageBody, String> {
         .collect();
     let to = parsed.headers.get_first_value("To").unwrap_or_default();
     let cc = parsed.headers.get_first_value("Cc");
+    let message_id = parsed.headers.get_first_value("Message-ID");
+    let references = parsed.headers.get_first_value("References");
 
     Ok(MessageBody {
         text,
         html,
         to,
         cc,
+        message_id,
+        references,
         attachments,
     })
 }
@@ -600,17 +609,12 @@ fn build_outgoing_message(
     display_name: &str,
     input: OutgoingMessageInput,
 ) -> Result<Message, String> {
-    let recipients = input
-        .recipients
-        .split([',', ';'])
-        .map(str::trim)
-        .filter(|recipient| !recipient.is_empty())
-        .map(|recipient| recipient.parse::<Mailbox>())
-        .collect::<Result<Vec<_>, _>>()
-        .map_err(|_| "Enter valid recipient email addresses.".to_string())?;
+    let recipients =
+        parse_mailboxes(&input.recipients).ok_or("Enter valid recipient email addresses.")?;
     if recipients.is_empty() {
         return Err("Enter at least one recipient.".to_string());
     }
+    let cc_recipients = parse_mailboxes(&input.cc).ok_or("Enter valid Cc email addresses.")?;
     if input.body.trim().is_empty() {
         return Err("Message text cannot be empty.".to_string());
     }
@@ -629,9 +633,27 @@ fn build_outgoing_message(
     for recipient in recipients {
         builder = builder.to(recipient);
     }
+    for recipient in cc_recipients {
+        builder = builder.cc(recipient);
+    }
+    if let Some(in_reply_to) = input.in_reply_to {
+        builder = builder.in_reply_to(in_reply_to);
+    }
+    if let Some(references) = input.references {
+        builder = builder.references(references);
+    }
     builder
         .body(input.body)
         .map_err(|_| "Unable to prepare the message.".to_string())
+}
+
+fn parse_mailboxes(addresses: &str) -> Option<Vec<Mailbox>> {
+    addresses
+        .split([',', ';'])
+        .map(str::trim)
+        .filter(|address| !address.is_empty())
+        .map(|address| address.parse::<Mailbox>().ok())
+        .collect()
 }
 
 fn limit_message_text(value: String) -> String {
@@ -1053,14 +1075,60 @@ mod tests {
             "Sender",
             OutgoingMessageInput {
                 recipients: "first@example.com; second@example.com".to_string(),
+                cc: String::new(),
                 subject: "Subject".to_string(),
                 body: "Message body".to_string(),
+                in_reply_to: None,
+                references: None,
             },
         )
         .expect("message should build");
 
         assert_eq!(message.envelope().to().len(), 2);
         assert!(String::from_utf8_lossy(&message.formatted()).contains("Message body"));
+    }
+
+    #[test]
+    fn builds_message_with_cc_recipients() {
+        let message = build_outgoing_message(
+            "sender@example.com",
+            "Sender",
+            OutgoingMessageInput {
+                recipients: "first@example.com".to_string(),
+                cc: "second@example.com".to_string(),
+                subject: "Subject".to_string(),
+                body: "Message body".to_string(),
+                in_reply_to: None,
+                references: None,
+            },
+        )
+        .expect("message should build");
+
+        assert_eq!(message.envelope().to().len(), 2);
+        assert!(String::from_utf8_lossy(&message.formatted()).contains("Cc: second@example.com"));
+    }
+
+    #[test]
+    fn builds_message_with_threading_headers() {
+        let message = build_outgoing_message(
+            "sender@example.com",
+            "Sender",
+            OutgoingMessageInput {
+                recipients: "first@example.com".to_string(),
+                cc: String::new(),
+                subject: "Re: Subject".to_string(),
+                body: "Message body".to_string(),
+                in_reply_to: Some("<original@example.com>".to_string()),
+                references: Some("<thread-start@example.com> <original@example.com>".to_string()),
+            },
+        )
+        .expect("message should build");
+
+        let formatted = String::from_utf8_lossy(&message.formatted()).into_owned();
+        assert!(formatted.contains("In-Reply-To: <original@example.com>"));
+        assert!(formatted.contains(
+            "References: <thread-start@example.com> <original@example.com>"
+        ));
     }
 
     #[test]

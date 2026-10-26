@@ -11,13 +11,13 @@ RMail is a lightweight desktop email client built with Rust, Tauri 2, React, and
 - Per-account desktop notifications for new mail, off by default; a general switch gates all of them. A global sender exclusion list (Settings) additionally silences the notification and the tray unread indicator for specific senders, regardless of which account they arrive in.
 - Non-blocking cache refreshes that preserve the selected message and open content.
 - Local SQLite cache for mailboxes, headers, opened message bodies, attachment metadata, and drafts.
-- Plain-text composition, local drafts, SMTP sending, and explicit attachment downloads.
+- Plain-text composition with To/Cc, local drafts, SMTP sending, and explicit attachment downloads.
 - Mark individual, selected, or all messages as read; delete individual or multi-selected messages (moved to the account's Trash mailbox).
 - A classic expandable folder tree per account, and renameable account names (Gmail accounts default to "email (name)" to stay distinguishable).
 - Dynamic system tray icon indicating unread message status.
 - Sanitized HTML message rendering in a sandboxed iframe.
 - Clear message cache from Settings: wipes cached mailboxes/messages/bodies/attachments and reclaims disk space (`VACUUM`), without touching accounts, stored credentials, or local drafts. Logs the mailbox/message counts cleared, since the UI immediately resynchronizes afterward and would otherwise look like a no-op.
-- Right-click a message for Reply (pre-fills the sender's address and a "Re:" subject, without doubling an existing prefix), Exclude from notifications, and Delete.
+- Reply, Reply all, and Forward (from the message list's right-click menu or the open message's toolbar): the reply/forward body is pre-filled with the quoted original text, and a reply sets the `In-Reply-To`/`References` headers (RFC 5322) so the message threads correctly in standards-compliant mail clients - preserved across saving the reply as a draft and sending it later. Reply all fills Cc from the original To/Cc, excluding the active account's own address. The message list also offers Exclude from notifications and Delete.
 
 ## Architecture & Refactoring
 

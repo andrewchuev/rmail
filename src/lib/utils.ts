@@ -1,6 +1,6 @@
 import { clsx, type ClassValue } from "clsx"
 import { twMerge } from "tailwind-merge"
-import type { CachedMailbox, CachedMessage } from "@/lib/accounts"
+import type { CachedMailbox, CachedMessage, MessageBody } from "@/lib/accounts"
 
 export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs))
@@ -87,6 +87,52 @@ export function wrapEmailHtml(bodyHtml: string): string {
 </head>
 <body>${bodyHtml}</body>
 </html>`;
+}
+
+/**
+ * Builds the quoted-original-message block used to pre-fill a reply body,
+ * in the conventional "On <date>, <sender> wrote:" + "> "-prefixed form.
+ */
+export function quoteMessageBody(message: CachedMessage, body: MessageBody): string {
+  const quotedLines = body.text.split("\n").map((line) => `> ${line}`).join("\n");
+  return `On ${message.date}, ${message.sender} <${message.senderEmail}> wrote:\n${quotedLines}`;
+}
+
+/**
+ * Builds the "forwarded message" header block + original body used to
+ * pre-fill a forward body.
+ */
+export function buildForwardBody(message: CachedMessage, body: MessageBody): string {
+  return `---------- Forwarded message ---------\nFrom: ${message.sender} <${message.senderEmail}>\nDate: ${message.date}\nSubject: ${message.subject}\nTo: ${body.to}\n\n${body.text}`;
+}
+
+/**
+ * Merges comma/semicolon-separated address lists into one deduplicated,
+ * case-insensitively compared list, dropping any address in `exclude`.
+ * Used to build the Cc line for "Reply All".
+ */
+export function mergeRecipientLists(lists: (string | null | undefined)[], exclude: string[] = []): string {
+  const excludeSet = new Set(exclude.filter(Boolean).map((address) => address.toLowerCase()));
+  const seen = new Set<string>();
+  const result: string[] = [];
+  for (const list of lists) {
+    if (!list) continue;
+    for (const raw of list.split(/[,;]/)) {
+      const address = raw.trim();
+      if (!address) continue;
+      const key = address.toLowerCase();
+      if (excludeSet.has(key) || seen.has(key)) continue;
+      seen.add(key);
+      result.push(address);
+    }
+  }
+  return result.join(", ");
+}
+
+/** Builds the `References` header value for a reply, per RFC 5322 §3.6.4. */
+export function mergeReferences(originalReferences: string | null, originalMessageId: string | null): string | null {
+  if (!originalMessageId) return originalReferences;
+  return originalReferences ? `${originalReferences} ${originalMessageId}` : originalMessageId;
 }
 
 export function cachedMailboxesEqual(left: CachedMailbox[], right: CachedMailbox[]) {

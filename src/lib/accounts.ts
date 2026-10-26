@@ -61,6 +61,8 @@ export type MessageBody = {
   to: string;
   cc: string | null;
   attachments: AttachmentMetadata[];
+  messageId: string | null;
+  references: string | null;
 };
 
 export type AttachmentMetadata = {
@@ -73,8 +75,11 @@ export type AttachmentMetadata = {
 export type Draft = {
   id: number;
   recipients: string;
+  cc: string;
   subject: string;
   body: string;
+  inReplyTo: string | null;
+  references: string | null;
   updatedAt: string;
 };
 
@@ -82,8 +87,11 @@ export type DraftInput = {
   id: number | null;
   accountId: number;
   recipients: string;
+  cc: string;
   subject: string;
   body: string;
+  inReplyTo: string | null;
+  references: string | null;
 };
 
 export type OutgoingMessageInput = Omit<DraftInput, "id" | "accountId">;

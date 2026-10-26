@@ -64,8 +64,11 @@ pub struct SaveDraftInput {
     pub id: Option<i64>,
     pub account_id: i64,
     pub recipients: String,
+    pub cc: String,
     pub subject: String,
     pub body: String,
+    pub in_reply_to: Option<String>,
+    pub references: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -73,8 +76,11 @@ pub struct SaveDraftInput {
 pub struct Draft {
     pub id: i64,
     pub recipients: String,
+    pub cc: String,
     pub subject: String,
     pub body: String,
+    pub in_reply_to: Option<String>,
+    pub references: Option<String>,
     pub updated_at: String,
 }
 
@@ -171,9 +177,19 @@ impl Database {
         let id = if let Some(id) = input.id {
             let changed = connection
                 .execute(
-                    "UPDATE drafts SET recipients = ?1, subject = ?2, body = ?3, updated_at = CURRENT_TIMESTAMP
-                     WHERE id = ?4 AND account_id = ?5",
-                    params![input.recipients, input.subject, input.body, id, input.account_id],
+                    "UPDATE drafts SET recipients = ?1, cc = ?2, subject = ?3, body = ?4,
+                       in_reply_to = ?5, references_header = ?6, updated_at = CURRENT_TIMESTAMP
+                     WHERE id = ?7 AND account_id = ?8",
+                    params![
+                        input.recipients,
+                        input.cc,
+                        input.subject,
+                        input.body,
+                        input.in_reply_to,
+                        input.references,
+                        id,
+                        input.account_id
+                    ],
                 )
                 .map_err(|error| error.to_string())?;
             if changed == 0 {
@@ -183,8 +199,17 @@ impl Database {
         } else {
             connection
                 .execute(
-                    "INSERT INTO drafts (account_id, recipients, subject, body) VALUES (?1, ?2, ?3, ?4)",
-                    params![input.account_id, input.recipients, input.subject, input.body],
+                    "INSERT INTO drafts (account_id, recipients, cc, subject, body, in_reply_to, references_header)
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+                    params![
+                        input.account_id,
+                        input.recipients,
+                        input.cc,
+                        input.subject,
+                        input.body,
+                        input.in_reply_to,
+                        input.references
+                    ],
                 )
                 .map_err(|error| error.to_string())?;
             connection.last_insert_rowid()
@@ -192,15 +217,19 @@ impl Database {
 
         connection
             .query_row(
-                "SELECT id, recipients, subject, body, updated_at FROM drafts WHERE id = ?1",
+                "SELECT id, recipients, cc, subject, body, in_reply_to, references_header, updated_at
+                 FROM drafts WHERE id = ?1",
                 params![id],
                 |row| {
                     Ok(Draft {
                         id: row.get(0)?,
                         recipients: row.get(1)?,
-                        subject: row.get(2)?,
-                        body: row.get(3)?,
-                        updated_at: row.get(4)?,
+                        cc: row.get(2)?,
+                        subject: row.get(3)?,
+                        body: row.get(4)?,
+                        in_reply_to: row.get(5)?,
+                        references: row.get(6)?,
+                        updated_at: row.get(7)?,
                     })
                 },
             )
@@ -327,7 +356,7 @@ impl Database {
         let connection = self.connection.lock().map_err(|error| error.to_string())?;
         let body_row = connection
             .query_row(
-                "SELECT body, to_recipients, cc_recipients FROM message_bodies
+                "SELECT body, to_recipients, cc_recipients, message_id, references_header FROM message_bodies
                  WHERE account_id = ?1 AND mailbox_path = ?2 AND uid = ?3",
                 params![account_id, mailbox_path, uid],
                 |row| {
@@ -335,6 +364,8 @@ impl Database {
                         row.get::<_, String>(0)?,
                         row.get::<_, String>(1)?,
                         row.get::<_, Option<String>>(2)?,
+                        row.get::<_, Option<String>>(3)?,
+                        row.get::<_, Option<String>>(4)?,
                     ))
                 },
             )
@@ -345,7 +376,7 @@ impl Database {
             })
             .map_err(|error| error.to_string())?;
 
-        let Some((text, to, cc)) = body_row else {
+        let Some((text, to, cc, message_id, references)) = body_row else {
             return Ok(None);
         };
         let mut statement = connection
@@ -389,6 +420,8 @@ impl Database {
             to,
             cc,
             attachments,
+            message_id,
+            references,
         }))
     }
 
@@ -405,14 +438,25 @@ impl Database {
             .map_err(|error| error.to_string())?;
         transaction
             .execute(
-                "INSERT INTO message_bodies (account_id, mailbox_path, uid, body, to_recipients, cc_recipients, cached_at)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, CURRENT_TIMESTAMP)
+                "INSERT INTO message_bodies (account_id, mailbox_path, uid, body, to_recipients, cc_recipients, message_id, references_header, cached_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, CURRENT_TIMESTAMP)
                  ON CONFLICT(account_id, mailbox_path, uid) DO UPDATE SET
                    body = excluded.body,
                    to_recipients = excluded.to_recipients,
                    cc_recipients = excluded.cc_recipients,
+                   message_id = excluded.message_id,
+                   references_header = excluded.references_header,
                    cached_at = CURRENT_TIMESTAMP",
-                params![account_id, mailbox_path, uid, body.text, body.to, body.cc],
+                params![
+                    account_id,
+                    mailbox_path,
+                    uid,
+                    body.text,
+                    body.to,
+                    body.cc,
+                    body.message_id,
+                    body.references
+                ],
             )
             .map_err(|error| error.to_string())?;
         transaction
@@ -988,7 +1032,12 @@ impl Database {
             "to_recipients",
             "TEXT NOT NULL DEFAULT ''",
         )?;
-        add_column_if_missing(&connection, "message_bodies", "cc_recipients", "TEXT")
+        add_column_if_missing(&connection, "message_bodies", "cc_recipients", "TEXT")?;
+        add_column_if_missing(&connection, "message_bodies", "message_id", "TEXT")?;
+        add_column_if_missing(&connection, "message_bodies", "references_header", "TEXT")?;
+        add_column_if_missing(&connection, "drafts", "cc", "TEXT NOT NULL DEFAULT ''")?;
+        add_column_if_missing(&connection, "drafts", "in_reply_to", "TEXT")?;
+        add_column_if_missing(&connection, "drafts", "references_header", "TEXT")
     }
 
     #[cfg(test)]
@@ -1061,8 +1110,11 @@ fn validate_draft(input: SaveDraftInput) -> Result<SaveDraftInput, String> {
         id: input.id,
         account_id: input.account_id,
         recipients: input.recipients.trim().to_string(),
+        cc: input.cc.trim().to_string(),
         subject: input.subject.trim().to_string(),
         body: input.body,
+        in_reply_to: input.in_reply_to,
+        references: input.references,
     })
 }
 
@@ -1222,6 +1274,8 @@ mod tests {
                     to: "person@example.com".to_string(),
                     cc: None,
                     attachments: Vec::new(),
+                    message_id: None,
+                    references: None,
                 },
             )
             .expect("body should persist");
@@ -1235,6 +1289,8 @@ mod tests {
                 to: "person@example.com".to_string(),
                 cc: None,
                 attachments: Vec::new(),
+                message_id: None,
+                references: None,
             })
         );
 
@@ -1277,8 +1333,11 @@ mod tests {
                 id: None,
                 account_id: account.id,
                 recipients: " person@example.com ".to_string(),
+                cc: String::new(),
                 subject: " Subject ".to_string(),
                 body: "Draft body".to_string(),
+                in_reply_to: None,
+                references: None,
             })
             .expect("draft should save");
         let updated = database
@@ -1286,8 +1345,11 @@ mod tests {
                 id: Some(draft.id),
                 account_id: account.id,
                 recipients: draft.recipients,
+                cc: draft.cc,
                 subject: "Updated".to_string(),
                 body: draft.body,
+                in_reply_to: None,
+                references: None,
             })
             .expect("draft should update");
 
@@ -1390,6 +1452,8 @@ mod tests {
                     to: "person@example.com".to_string(),
                     cc: None,
                     attachments: Vec::new(),
+                    message_id: None,
+                    references: None,
                 },
             )
             .expect("body should persist");
@@ -1461,6 +1525,8 @@ mod tests {
                     to: "person@example.com".to_string(),
                     cc: None,
                     attachments: Vec::new(),
+                    message_id: None,
+                    references: None,
                 },
             )
             .expect("body should persist");
@@ -1577,6 +1643,8 @@ mod tests {
                     to: "person@example.com".to_string(),
                     cc: None,
                     attachments: Vec::new(),
+                    message_id: None,
+                    references: None,
                 },
             )
             .expect("body should persist");
@@ -1585,8 +1653,11 @@ mod tests {
                 id: None,
                 account_id: account.id,
                 recipients: "person@example.com".to_string(),
+                cc: String::new(),
                 subject: "Draft".to_string(),
                 body: "Draft body".to_string(),
+                in_reply_to: None,
+                references: None,
             })
             .expect("draft should save");
 

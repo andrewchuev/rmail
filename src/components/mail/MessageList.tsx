@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import { BellOff, CheckCheck, CheckSquare, Reply, Search, Trash2, X } from "lucide-react";
+import { BellOff, CheckCheck, CheckSquare, Forward, Reply, ReplyAll, Search, Trash2, X } from "lucide-react";
 import {
   ContextMenu,
   ContextMenuContent,
@@ -64,7 +64,9 @@ export function MessageList({
   onClearSelection,
   onDeleteMessage,
   onExcludeSender,
+  onForward,
   onReply,
+  onReplyAll,
   onSelectFromSender,
   onSelectMessage,
   onToggleMessageSelection,
@@ -81,7 +83,9 @@ export function MessageList({
   onClearSelection: () => void;
   onDeleteMessage: (message: CachedMessage) => void;
   onExcludeSender: (message: CachedMessage) => void;
+  onForward: (message: CachedMessage) => void;
   onReply: (message: CachedMessage) => void;
+  onReplyAll: (message: CachedMessage) => void;
   onSelectFromSender: (message: CachedMessage) => void;
   onSelectMessage: (message: CachedMessage) => void;
   onToggleMessageSelection: (key: string, checked: boolean) => void;
@@ -176,6 +180,12 @@ export function MessageList({
                 <ContextMenuContent>
                   <ContextMenuItem onSelect={() => onReply(message)}>
                     <Reply /> Reply
+                  </ContextMenuItem>
+                  <ContextMenuItem onSelect={() => onReplyAll(message)}>
+                    <ReplyAll /> Reply all
+                  </ContextMenuItem>
+                  <ContextMenuItem onSelect={() => onForward(message)}>
+                    <Forward /> Forward
                   </ContextMenuItem>
                   <ContextMenuItem onSelect={() => onSelectFromSender(message)}>
                     <CheckSquare /> Select from sender

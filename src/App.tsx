@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState, useTransition, type FormEvent, type ReactNode } from "react";
-import { Archive, ArrowLeft, Clock3, LayoutTemplate, List, Trash2 } from "lucide-react";
+import { Archive, ArrowLeft, Clock3, Forward, LayoutTemplate, List, Reply, ReplyAll, Trash2 } from "lucide-react";
 import { save } from "@tauri-apps/plugin-dialog";
 import { isPermissionGranted, requestPermission, sendNotification } from "@tauri-apps/plugin-notification";
 import { info as logInfo, warn as logWarn } from "@tauri-apps/plugin-log";
@@ -46,7 +46,17 @@ import {
 } from "@/lib/accounts";
 import { applyWindowSettings, loadBackgroundSettings, saveBackgroundSettings, type BackgroundSettings } from "@/lib/settings";
 import "./App.css";
-import { folderLabel, attachmentFileName, messageKey, cachedMessagesEqual, cachedMailboxesEqual } from "@/lib/utils";
+import {
+  attachmentFileName,
+  buildForwardBody,
+  cachedMailboxesEqual,
+  cachedMessagesEqual,
+  folderLabel,
+  mergeReferences,
+  mergeRecipientLists,
+  messageKey,
+  quoteMessageBody,
+} from "@/lib/utils";
 
 function App() {
   const [, startTransition] = useTransition();
@@ -535,16 +545,60 @@ function App() {
     setComposeOpen(true);
   }
 
-  function handleReplyToMessage(message: CachedMessage) {
-    setCompose({
-      recipients: message.senderEmail || message.sender,
-      subject: /^re:/i.test(message.subject) ? message.subject : `Re: ${message.subject}`,
-      body: "",
-    });
+  async function getBodyForMessage(message: CachedMessage): Promise<MessageBody | null> {
+    if (messageBody && messageKey(message) === selectedMessageKey) {
+      return messageBody;
+    }
+    try {
+      return await loadMessageBody(message.accountId, message.mailboxPath, message.uid);
+    } catch (reason) {
+      console.error("Unable to load the message to reply to:", reason);
+      return null;
+    }
+  }
+
+  function openComposeFor(message: CachedMessage, patch: Partial<ComposeState>) {
+    setCompose({ ...emptyCompose, ...patch });
     setDraftId(null);
     setComposeMessage(null);
     setComposeAccountId(message.accountId);
     setComposeOpen(true);
+  }
+
+  async function handleReplyToMessage(message: CachedMessage) {
+    const body = await getBodyForMessage(message);
+    openComposeFor(message, {
+      recipients: message.senderEmail || message.sender,
+      subject: /^re:/i.test(message.subject) ? message.subject : `Re: ${message.subject}`,
+      body: body ? `\n\n${quoteMessageBody(message, body)}` : "",
+      inReplyTo: body?.messageId ?? null,
+      references: body ? mergeReferences(body.references, body.messageId) : null,
+    });
+  }
+
+  async function handleReplyAllToMessage(message: CachedMessage) {
+    const account = accountList.find((item) => item.id === message.accountId);
+    const body = await getBodyForMessage(message);
+    const recipients = message.senderEmail || message.sender;
+    const cc = body
+      ? mergeRecipientLists([body.to, body.cc], [recipients, account?.email ?? ""])
+      : "";
+    openComposeFor(message, {
+      recipients,
+      cc,
+      subject: /^re:/i.test(message.subject) ? message.subject : `Re: ${message.subject}`,
+      body: body ? `\n\n${quoteMessageBody(message, body)}` : "",
+      inReplyTo: body?.messageId ?? null,
+      references: body ? mergeReferences(body.references, body.messageId) : null,
+    });
+  }
+
+  async function handleForwardMessage(message: CachedMessage) {
+    const body = await getBodyForMessage(message);
+    openComposeFor(message, {
+      subject: /^fwd:/i.test(message.subject) ? message.subject : `Fwd: ${message.subject}`,
+      body: body ? buildForwardBody(message, body) : "",
+    });
   }
 
   async function handleExcludeSenderFromNotifications(message: CachedMessage) {
@@ -721,7 +775,9 @@ function App() {
         onClearSelection={() => setSelectedMessageKeys(new Set())}
         onDeleteMessage={handleDeleteMessage}
         onExcludeSender={(message) => void handleExcludeSenderFromNotifications(message)}
-        onReply={handleReplyToMessage}
+        onForward={(message) => void handleForwardMessage(message)}
+        onReply={(message) => void handleReplyToMessage(message)}
+        onReplyAll={(message) => void handleReplyAllToMessage(message)}
         onSelectFromSender={handleSelectMessagesFromSender}
         onSelectMessage={handleSelectMessage}
         onToggleMessageSelection={toggleMessageSelection}
@@ -781,6 +837,9 @@ function App() {
                           <ArrowLeft />
                         </IconButton>
                         <div className="flex gap-1">
+                          <IconButton label="Reply" onClick={() => void handleReplyToMessage(selectedMessage)}><Reply /></IconButton>
+                          <IconButton label="Reply all" onClick={() => void handleReplyAllToMessage(selectedMessage)}><ReplyAll /></IconButton>
+                          <IconButton label="Forward" onClick={() => void handleForwardMessage(selectedMessage)}><Forward /></IconButton>
                           <IconButton label="Archive"><Archive /></IconButton>
                           <IconButton label="Delete" onClick={() => handleDeleteMessage(selectedMessage)}><Trash2 /></IconButton>
                           <IconButton label="Snooze"><Clock3 /></IconButton>
@@ -815,6 +874,9 @@ function App() {
                   <article className="flex h-full min-w-80 flex-col">
                     <header className="flex items-center justify-between border-b px-6 py-4">
                       <div className="flex gap-1">
+                        <IconButton label="Reply" onClick={selectedMessage ? () => void handleReplyToMessage(selectedMessage) : undefined}><Reply /></IconButton>
+                        <IconButton label="Reply all" onClick={selectedMessage ? () => void handleReplyAllToMessage(selectedMessage) : undefined}><ReplyAll /></IconButton>
+                        <IconButton label="Forward" onClick={selectedMessage ? () => void handleForwardMessage(selectedMessage) : undefined}><Forward /></IconButton>
                         <IconButton label="Archive"><Archive /></IconButton>
                         <IconButton label="Delete" onClick={selectedMessage ? () => handleDeleteMessage(selectedMessage) : undefined}><Trash2 /></IconButton>
                         <IconButton label="Snooze"><Clock3 /></IconButton>

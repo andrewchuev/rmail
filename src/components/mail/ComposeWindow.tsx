@@ -4,11 +4,21 @@ import type { Account } from "@/lib/accounts";
 
 export type ComposeState = {
   recipients: string;
+  cc: string;
   subject: string;
   body: string;
+  inReplyTo: string | null;
+  references: string | null;
 };
 
-export const emptyCompose: ComposeState = { recipients: "", subject: "", body: "" };
+export const emptyCompose: ComposeState = {
+  recipients: "",
+  cc: "",
+  subject: "",
+  body: "",
+  inReplyTo: null,
+  references: null,
+};
 
 export function ComposeWindow({
   accountList,
@@ -48,6 +58,7 @@ export function ComposeWindow({
         </select>
       </label>
       <label className="compose-field"><span>To</span><input autoFocus onChange={(event) => onComposeChange({ recipients: event.target.value })} placeholder="name@company.com, colleague@company.com" value={compose.recipients} /></label>
+      <label className="compose-field"><span>Cc</span><input onChange={(event) => onComposeChange({ cc: event.target.value })} placeholder="cc@company.com" value={compose.cc} /></label>
       <label className="compose-field"><span>Subject</span><input onChange={(event) => onComposeChange({ subject: event.target.value })} placeholder="Subject" value={compose.subject} /></label>
       <textarea aria-label="Message body" className="min-h-36 flex-1 resize-none p-4 outline-none" onChange={(event) => onComposeChange({ body: event.target.value })} placeholder="Write a message…" value={compose.body} />
       {composeMessage ? <p className="px-4 text-sm text-muted-foreground" role="status">{composeMessage}</p> : null}
