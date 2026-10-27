@@ -18,6 +18,7 @@ import { readCredential, saveCredentials } from "@/lib/credentials";
 import { enable as enableAutostart, isEnabled as isAutostartEnabled, disable as disableAutostart } from "@tauri-apps/plugin-autostart";
 import type { BackgroundSettings } from "@/lib/settings";
 import { connectionErrorMessage } from "@/lib/errors";
+import { SettingsTransfer } from "./SettingsTransfer";
 import { ThemeSwitcher } from "./ThemeSwitcher";
 
 type SettingsPageProps = {
@@ -81,6 +82,12 @@ const generalEntries: SearchEntry[] = [
     title: "Clear message cache",
     description: "Delete all cached mailboxes, messages, and message bodies from this device.",
     keywords: "clear flush database cache reset resync storage disk space wipe",
+  },
+  {
+    id: "settings-transfer",
+    title: "Export and import settings",
+    description: "Move preferences and accounts to another computer using an encrypted file.",
+    keywords: "export import backup restore transfer migrate settings accounts passwords file move computer",
   },
   {
     id: "notification-exclusions",
@@ -596,6 +603,7 @@ export function SettingsPage({
                   <input checked={autostartState} onChange={(event) => handleAutostartToggle(event.target.checked)} type="checkbox" />
                 </label>
               ) : null}
+              {matchedIds.has("settings-transfer") ? <SettingsTransfer /> : null}
               {matchedIds.has("flush-cache") ? <ClearCacheAction onCacheFlushed={onCacheFlushed} /> : null}
             </div>
           </section>

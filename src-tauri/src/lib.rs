@@ -1,6 +1,7 @@
 mod google_oauth;
 mod imap_pool;
 mod mail;
+mod settings_transfer;
 mod storage;
 
 use std::collections::HashMap;
@@ -288,33 +289,90 @@ fn list_accounts(state: tauri::State<'_, AppState>) -> Result<Vec<Account>, Stri
     state.database.list_accounts()
 }
 
+/// Writes the same password to both the IMAP and SMTP keyring entries.
+fn write_password(account_id: i64, password: &str) -> Result<(), String> {
+    for name in ["imapPassword", "smtpPassword"] {
+        Entry::new(CREDENTIAL_SERVICE, &format!("account:{}:{}", account_id, name))
+            .map_err(|error| error.to_string())?
+            .set_password(password)
+            .map_err(|error| error.to_string())?;
+    }
+    Ok(())
+}
+
 #[tauri::command]
 async fn save_credentials(
     account_id: i64,
     password: String,
     state: tauri::State<'_, AppState>,
 ) -> Result<(), String> {
-    let imap_entry = Entry::new(
-        CREDENTIAL_SERVICE,
-        &format!("account:{}:imapPassword", account_id),
-    )
-    .map_err(|error| error.to_string())?;
-    imap_entry
-        .set_password(&password)
-        .map_err(|error| error.to_string())?;
-
-    let smtp_entry = Entry::new(
-        CREDENTIAL_SERVICE,
-        &format!("account:{}:smtpPassword", account_id),
-    )
-    .map_err(|error| error.to_string())?;
-    smtp_entry
-        .set_password(&password)
-        .map_err(|error| error.to_string())?;
+    write_password(account_id, &password)?;
 
     // The cached IMAP session (if any) was authenticated with the old password.
     state.imap_pool.evict(account_id).await;
     Ok(())
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ExportSettingsInput {
+    path: std::path::PathBuf,
+    passphrase: String,
+    app_preferences: serde_json::Value,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ImportSettingsInput {
+    path: std::path::PathBuf,
+    passphrase: String,
+}
+
+#[tauri::command]
+async fn export_settings(
+    input: ExportSettingsInput,
+    state: tauri::State<'_, AppState>,
+) -> Result<settings_transfer::ExportSummary, String> {
+    settings_transfer::validate_passphrase(&input.passphrase)?;
+    let payload = settings_transfer::collect_payload(&state.database, input.app_preferences)?;
+    let summary = settings_transfer::summarize_export(&payload);
+    let ExportSettingsInput { path, passphrase, .. } = input;
+    // Argon2 is deliberately slow and memory-hungry; keep it off the async runtime threads.
+    tauri::async_runtime::spawn_blocking(move || {
+        let contents = settings_transfer::encrypt_payload(&payload, &passphrase)?;
+        settings_transfer::write_private_file(&path, &contents)
+    })
+    .await
+    .map_err(|error| error.to_string())??;
+    tauri_plugin_log::log::info!(
+        "export_settings completed: accounts={} without_secret={}",
+        summary.accounts,
+        summary.accounts_without_secret
+    );
+    Ok(summary)
+}
+
+#[tauri::command]
+async fn import_settings(
+    input: ImportSettingsInput,
+    state: tauri::State<'_, AppState>,
+) -> Result<settings_transfer::ImportSummary, String> {
+    let ImportSettingsInput { path, passphrase } = input;
+    let payload = tauri::async_runtime::spawn_blocking(move || {
+        let contents = std::fs::read_to_string(&path)
+            .map_err(|_| "Unable to read the selected file.".to_string())?;
+        settings_transfer::decrypt_payload(&contents, &passphrase)
+    })
+    .await
+    .map_err(|error| error.to_string())??;
+    let summary = settings_transfer::apply_payload(&state.database, payload)?;
+    tauri_plugin_log::log::info!(
+        "import_settings completed: added={} skipped={} failed={}",
+        summary.accounts_added,
+        summary.accounts_skipped,
+        summary.failures.len()
+    );
+    Ok(summary)
 }
 
 #[tauri::command]
@@ -820,6 +878,8 @@ pub fn run() {
             list_unified_inbox,
             load_message_body,
             save_message_attachment,
+            export_settings,
+            import_settings,
             send_message,
             test_mail_connection,
             sync_account,

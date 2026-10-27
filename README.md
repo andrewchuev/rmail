@@ -58,6 +58,8 @@ Portable builds (no installer) are attached to every [release](https://github.co
 - Mark as read (single, selected, or all); delete (moves to the account's Trash mailbox).
 - Expandable folder tree per account, with renameable account names.
 - Sanitized HTML message rendering in a sandboxed iframe.
+- Export and import of settings (Settings > Export and import settings): preferences, accounts with their passwords/Gmail tokens, and notification exclusions go into one file encrypted with a password you choose. Importing merges - accounts with an address that already exists are left untouched.
+- Current version shown at the right of the status bar.
 
 ## Security
 
@@ -65,6 +67,7 @@ Portable builds (no installer) are attached to every [release](https://github.co
 - The frontend never handles account passwords - Rust resolves credentials from the keyring by `accountId`.
 - OAuth uses a random loopback callback, validates `state`, and uses PKCE.
 - Changing an account's identity clears its cached data.
+- Settings exports are encrypted with XChaCha20-Poly1305; the key is derived from your password with Argon2id (64 MiB, 3 passes). A forgotten password cannot be recovered.
 
 ## Performance
 

@@ -1053,7 +1053,7 @@ impl Database {
     }
 
     #[cfg(test)]
-    fn in_memory() -> Result<Self, String> {
+    pub(crate) fn in_memory() -> Result<Self, String> {
         let database = Self {
             connection: Mutex::new(
                 Connection::open_in_memory().map_err(|error| error.to_string())?,

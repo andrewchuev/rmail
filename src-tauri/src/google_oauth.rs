@@ -288,6 +288,17 @@ pub fn store_refresh_token(email: &str, refresh_token: &str) -> Result<(), Strin
         .map_err(|error| error.to_string())
 }
 
+pub fn load_refresh_token(email: &str) -> Result<Option<String>, String> {
+    match Entry::new(TOKEN_SERVICE, email)
+        .map_err(|error| error.to_string())?
+        .get_password()
+    {
+        Ok(token) => Ok(Some(token)),
+        Err(keyring::Error::NoEntry) => Ok(None),
+        Err(error) => Err(error.to_string()),
+    }
+}
+
 pub fn delete_refresh_token(email: &str) -> Result<(), String> {
     invalidate_cached_token(email);
     let entry = Entry::new(TOKEN_SERVICE, email).map_err(|error| error.to_string())?;
