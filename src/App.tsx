@@ -839,7 +839,7 @@ function App() {
     <TooltipProvider delayDuration={350}>
       <main className="h-svh overflow-hidden flex flex-col bg-background text-foreground">
         <div className="flex-1 overflow-hidden">
-          <ResizablePanelGroup className="min-h-svh" orientation="horizontal">
+          <ResizablePanelGroup className="h-full" orientation="horizontal">
             <ResizablePanel defaultSize="19%" minSize="16%">
               <Sidebar
                 accountList={accountList}
