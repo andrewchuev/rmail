@@ -1,4 +1,4 @@
-import { ChevronRight, Inbox, PenLine, Plus, Settings } from "lucide-react";
+import { ChevronRight, Inbox, PenLine, Plus, RefreshCw, Settings } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import type { Account, CachedMailbox } from "@/lib/accounts";
 import { folderLabel } from "@/lib/utils";
@@ -15,8 +15,10 @@ export function Sidebar({
   onOpenSettings,
   onSelectAllInboxes,
   onSelectFolder,
+  onSyncAccount,
   onSyncAll,
   onToggleAccount,
+  syncingAccountId,
 }: {
   accountList: Account[];
   activeAccountId: number | null;
@@ -28,9 +30,14 @@ export function Sidebar({
   onOpenSettings: () => void;
   onSelectAllInboxes: () => void;
   onSelectFolder: (path: string) => void;
+  onSyncAccount: (accountId: number) => void;
   onSyncAll: () => void;
   onToggleAccount: (accountId: number, isExpanded: boolean) => void;
+  syncingAccountId: number | null;
 }) {
+  const isBusy = isSyncing || syncingAccountId !== null;
+  const isAccountSyncing = (accountId: number) => syncingAccountId === accountId;
+
   return (
     <aside className="flex h-full min-w-52 flex-col border-r bg-sidebar px-3 py-4">
       <div className="flex items-center justify-between px-2">
@@ -50,16 +57,12 @@ export function Sidebar({
         </div>
       </div>
 
-      <Button className="mt-6 w-full justify-start" onClick={onCompose}>
+      <Button className="mt-6 h-12 w-full justify-start gap-2 text-base [&_svg:not([class*='size-'])]:size-5" onClick={onCompose}>
         <PenLine />
         Compose
       </Button>
 
-      <Button className="mt-2 w-full" disabled={isSyncing} onClick={onSyncAll} size="sm" variant="secondary">
-        {isSyncing ? "Synchronizing…" : "Synchronize all"}
-      </Button>
-
-      <nav aria-label="Mail folders" className="mt-6 space-y-1">
+      <nav aria-label="Mail folders" className="mt-6 min-h-0 flex-1 space-y-1 overflow-y-auto">
         <button
           aria-current={activeAccountId === null ? "page" : undefined}
           className="folder-link"
@@ -75,16 +78,29 @@ export function Sidebar({
           const isExpanded = activeAccountId === account.id;
           return (
             <div key={account.id}>
-              <button
-                aria-expanded={isExpanded}
-                className="folder-link"
-                data-active={isExpanded}
-                onClick={() => onToggleAccount(account.id, isExpanded)}
-                type="button"
-              >
-                <ChevronRight className={`size-3.5 shrink-0 text-muted-foreground transition-transform ${isExpanded ? "rotate-90" : ""}`} />
-                <span className="truncate">{account.displayName}</span>
-              </button>
+              <div className="group flex items-center gap-1">
+                <button
+                  aria-expanded={isExpanded}
+                  className="folder-link min-w-0 flex-1"
+                  data-active={isExpanded}
+                  onClick={() => onToggleAccount(account.id, isExpanded)}
+                  type="button"
+                >
+                  <ChevronRight className={`size-3.5 shrink-0 text-muted-foreground transition-transform ${isExpanded ? "rotate-90" : ""}`} />
+                  <span className="truncate">{account.displayName}</span>
+                </button>
+                <Button
+                  aria-label={`Synchronize ${account.displayName}`}
+                  className={`shrink-0 transition-opacity focus-visible:opacity-100 group-hover:opacity-100 ${isAccountSyncing(account.id) ? "opacity-100" : "opacity-0"}`}
+                  disabled={isBusy}
+                  onClick={() => onSyncAccount(account.id)}
+                  size="icon-sm"
+                  title={`Synchronize ${account.displayName}`}
+                  variant="ghost"
+                >
+                  <RefreshCw className={isAccountSyncing(account.id) ? "animate-spin" : ""} />
+                </Button>
+              </div>
               {isExpanded ? (
                 <div className="ml-4 mt-1 space-y-1 border-l pl-2">
                   {mailboxes.map((mailbox) => (
@@ -107,6 +123,11 @@ export function Sidebar({
           );
         })}
       </nav>
+
+      <Button className="mt-4 w-full" disabled={isBusy} onClick={onSyncAll} size="sm" variant="secondary">
+        <RefreshCw className={isSyncing ? "animate-spin" : ""} />
+        {isSyncing ? "Synchronizing…" : "Synchronize all"}
+      </Button>
     </aside>
   );
 }

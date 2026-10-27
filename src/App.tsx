@@ -115,6 +115,7 @@ function App() {
   const [attachmentMessage, setAttachmentMessage] = useState<string | null>(null);
   const [isAddingAccount, setAddingAccount] = useState(false);
   const [isSyncing, setSyncing] = useState(false);
+  const [syncingAccountId, setSyncingAccountId] = useState<number | null>(null);
   const [composeAccountId, setComposeAccountId] = useState<number | null>(null);
   const [backgroundSettings, setBackgroundSettings] = useState<BackgroundSettings>(loadBackgroundSettings);
   const [activeView, setActiveView] = useState<"mail" | "settings">("mail");
@@ -718,6 +719,30 @@ function App() {
     }
   }
 
+  async function syncSingleAccount(accountId: number) {
+    if (syncInProgress.current) {
+      return;
+    }
+
+    const account = accountList.find((item) => item.id === accountId);
+    syncInProgress.current = true;
+    setSyncingAccountId(accountId);
+    try {
+      const status = await syncAccount(accountId);
+      startTransition(() => setSyncRevision((current) => current + 1));
+      // Manual sync: mark fetched messages as seen so the next background sync doesn't notify about them.
+      knownMessageKeys.current = new Set((await listUnifiedInbox()).map(messageKey));
+      startTransition(() => setSyncMessage(`Synchronized ${account?.displayName ?? "account"}, messages: ${status.messageCount}`));
+    } catch (reason) {
+      const detail = reason instanceof Error ? reason.message : String(reason || "Unknown error");
+      startTransition(() => setSyncMessage(`Sync failed for ${account?.displayName ?? "account"}: ${detail}`));
+      void logWarn(`syncSingleAccount failed: account=${accountId} reason=${detail}`);
+    } finally {
+      syncInProgress.current = false;
+      setSyncingAccountId(null);
+    }
+  }
+
   async function handleCacheFlushed() {
     setCachedMessages([]);
     setMailboxes([]);
@@ -827,8 +852,10 @@ function App() {
                 onOpenSettings={() => setActiveView("settings")}
                 onSelectAllInboxes={() => setActiveAccountId(null)}
                 onSelectFolder={setActiveFolder}
+                onSyncAccount={(accountId) => void syncSingleAccount(accountId)}
                 onSyncAll={() => void syncAllAccounts()}
                 onToggleAccount={handleToggleAccount}
+                syncingAccountId={syncingAccountId}
               />
             </ResizablePanel>
 
