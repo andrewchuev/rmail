@@ -40,11 +40,13 @@ Many IMAP/SMTP and Gmail accounts, one unified inbox, everything cached locally.
 
 ## Download
 
-Portable builds (no installer) are attached to every [release](https://github.com/andrewchuev/rmail/releases/latest):
+Portable builds and installers are attached to every [release](https://github.com/andrewchuev/rmail/releases/latest). The builds are unsigned, so Windows SmartScreen and macOS Gatekeeper warn on first launch (Windows: More info, Run anyway; macOS: right-click, Open).
 
-- **Windows:** `RMail-<version>-windows-x64-portable.zip` - unzip and run `RMail.exe`.
-- **macOS:** `RMail-<version>-macos-universal-portable.zip` - unzip and open `RMail.app` (unsigned: right-click, Open on first launch).
-- **Linux:** `RMail-<version>-linux-x86_64.AppImage` - `chmod +x` and run.
+| Platform | Installer | Portable |
+|---|---|---|
+| Windows | `RMail-<version>-windows-x64-setup.exe` | `RMail-<version>-windows-x64-portable.zip` - unzip and run `RMail.exe` |
+| macOS (universal) | `RMail-<version>-macos-universal.dmg` | `RMail-<version>-macos-universal-portable.zip` - unzip and open `RMail.app` |
+| Linux | `RMail-<version>-linux-amd64.deb`, `RMail-<version>-linux-x86_64.rpm` | `RMail-<version>-linux-x86_64.AppImage` - `chmod +x` and run |
 
 ## Features
 
@@ -109,7 +111,7 @@ Bumps the patch version across all five files, then runs `tauri build`.
 
 ### Releases
 
-Pushing a tag matching `v*.*.*` runs `.github/workflows/release.yml`, which builds portable (no-installer) artifacts for Windows (`.zip`), macOS (universal `.app.zip`), and Linux (`.AppImage`) and attaches them to a draft GitHub Release. Requires the `RMAIL_GOOGLE_CLIENT_ID`/`RMAIL_GOOGLE_CLIENT_SECRET` repo secrets for Gmail OAuth to work in the built app.
+Pushing a tag matching `v*.*.*` runs `.github/workflows/release.yml`, which builds portable artifacts and installers for Windows, macOS (universal), and Linux (see Download above), attaches them to a draft GitHub Release, and publishes it once all three platform builds succeed. Requires the `RMAIL_GOOGLE_CLIENT_ID`/`RMAIL_GOOGLE_CLIENT_SECRET` repo secrets for Gmail OAuth to work in the built app.
 
 ## Current limitations
 

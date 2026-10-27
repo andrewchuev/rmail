@@ -15,7 +15,7 @@ env:
 
 jobs:
   windows:
-    name: Windows portable
+    name: Windows (portable + installer)
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v5
@@ -33,10 +33,10 @@ jobs:
 
       - run: npm ci
 
-      - name: Build (no installer)
-        run: npm run tauri build -- --no-bundle
+      - name: Build (NSIS installer)
+        run: npm run tauri build -- --bundles nsis
 
-      - name: Package portable zip
+      - name: Package portable zip and installer
         shell: pwsh
         run: |
           $version = "${{ github.ref_name }}" -replace '^v', ''
@@ -44,12 +44,16 @@ jobs:
           New-Item -ItemType Directory -Path $dest | Out-Null
           Copy-Item src-tauri/target/release/rmail.exe "$dest/RMail.exe"
           Compress-Archive -Path "$dest/*" -DestinationPath "$dest.zip"
+          $setup = Get-ChildItem src-tauri/target/release/bundle/nsis -Filter *-setup.exe | Select-Object -First 1
+          Copy-Item $setup.FullName "RMail-$version-windows-x64-setup.exe"
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: windows-portable
-          path: RMail-*-windows-x64-portable.zip
+          name: windows
+          path: |
+            RMail-*-windows-x64-portable.zip
+            RMail-*-windows-x64-setup.exe
 
       - name: Attach to release
         if: startsWith(github.ref, 'refs/tags/')
@@ -57,11 +61,13 @@ jobs:
         with:
           draft: true
           name: RMail ${{ github.ref_name }}
-          files: RMail-*-windows-x64-portable.zip
+          files: |
+            RMail-*-windows-x64-portable.zip
+            RMail-*-windows-x64-setup.exe
           fail_on_unmatched_files: true
 
   macos:
-    name: macOS portable (universal)
+    name: macOS universal (portable + DMG)
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v5
@@ -81,21 +87,25 @@ jobs:
 
       - run: npm ci
 
-      - name: Build universal app bundle (no installer/DMG)
-        run: npm run tauri build -- --target universal-apple-darwin --bundles app
+      - name: Build universal app bundle and DMG
+        run: npm run tauri build -- --target universal-apple-darwin --bundles app,dmg
 
-      - name: Package portable zip
+      - name: Package portable zip and DMG
         run: |
           version="${GITHUB_REF_NAME#v}"
+          bundle=src-tauri/target/universal-apple-darwin/release/bundle
           ditto -c -k --sequesterRsrc --keepParent \
-            "src-tauri/target/universal-apple-darwin/release/bundle/macos/RMail.app" \
+            "$bundle/macos/RMail.app" \
             "RMail-${version}-macos-universal-portable.zip"
+          cp "$(find "$bundle/dmg" -maxdepth 1 -name '*.dmg' | head -n1)" "RMail-${version}-macos-universal.dmg"
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: macos-portable
-          path: RMail-*-macos-universal-portable.zip
+          name: macos
+          path: |
+            RMail-*-macos-universal-portable.zip
+            RMail-*-macos-universal.dmg
 
       - name: Attach to release
         if: startsWith(github.ref, 'refs/tags/')
@@ -103,11 +113,13 @@ jobs:
         with:
           draft: true
           name: RMail ${{ github.ref_name }}
-          files: RMail-*-macos-universal-portable.zip
+          files: |
+            RMail-*-macos-universal-portable.zip
+            RMail-*-macos-universal.dmg
           fail_on_unmatched_files: true
 
   linux:
-    name: Linux portable (AppImage)
+    name: Linux (AppImage + deb + rpm)
     runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v5
@@ -137,20 +149,26 @@ jobs:
 
       - run: npm ci
 
-      - name: Build AppImage (no deb/rpm)
-        run: npm run tauri build -- --bundles appimage
+      - name: Build AppImage, deb and rpm
+        run: npm run tauri build -- --bundles appimage,deb,rpm
 
-      - name: Rename AppImage
+      - name: Rename packages
         run: |
           version="${GITHUB_REF_NAME#v}"
-          src=$(find src-tauri/target/release/bundle/appimage -maxdepth 1 -name '*.AppImage' | head -n1)
-          cp "$src" "RMail-${version}-linux-x86_64.AppImage"
+          bundle=src-tauri/target/release/bundle
+          pick() { find "$bundle/$1" -maxdepth 1 -name "$2" | head -n1; }
+          cp "$(pick appimage '*.AppImage')" "RMail-${version}-linux-x86_64.AppImage"
+          cp "$(pick deb '*.deb')" "RMail-${version}-linux-amd64.deb"
+          cp "$(pick rpm '*.rpm')" "RMail-${version}-linux-x86_64.rpm"
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: linux-portable
-          path: RMail-*-linux-x86_64.AppImage
+          name: linux
+          path: |
+            RMail-*-linux-x86_64.AppImage
+            RMail-*-linux-amd64.deb
+            RMail-*-linux-x86_64.rpm
 
       - name: Attach to release
         if: startsWith(github.ref, 'refs/tags/')
@@ -158,7 +176,10 @@ jobs:
         with:
           draft: true
           name: RMail ${{ github.ref_name }}
-          files: RMail-*-linux-x86_64.AppImage
+          files: |
+            RMail-*-linux-x86_64.AppImage
+            RMail-*-linux-amd64.deb
+            RMail-*-linux-x86_64.rpm
           fail_on_unmatched_files: true
 
   publish:
