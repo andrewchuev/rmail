@@ -543,7 +543,13 @@ async fn send_message(
     input: SendMessageInput,
     state: tauri::State<'_, AppState>,
 ) -> Result<(), String> {
-    tauri_plugin_log::log::info!("send_message started for account {}", input.account_id);
+    tauri_plugin_log::log::info!(
+        "send_message started for account {} to=[{}] cc=[{}] in_reply_to={}",
+        input.account_id,
+        input.message.recipients,
+        input.message.cc,
+        input.message.in_reply_to.as_deref().unwrap_or("-")
+    );
     let account = state.database.get_account(input.account_id)?;
     let connection = match mail_connection(&account).await {
         Ok(c) => c,
