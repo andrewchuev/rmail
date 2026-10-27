@@ -27,25 +27,28 @@ const range = base ? `${base}..${tag}` : tag;
 const subjects = git("log", "--no-merges", "--pretty=format:%s", range).split("\n").filter(Boolean);
 
 const sections = [
-  ["feat", "Features"],
-  ["fix", "Fixes"],
-  ["perf", "Performance"],
-  ["refactor", "Refactoring"],
-  ["docs", "Documentation"],
+  [["feat"], "Features"],
+  [["fix"], "Fixes"],
+  [["perf"], "Performance"],
+  [["refactor"], "Refactoring"],
+  [["build", "ci"], "Build and release"],
+  [["docs"], "Documentation"],
 ];
-const grouped = new Map(sections.map(([type]) => [type, []]));
+const sectionByType = new Map(sections.flatMap(([types, title]) => types.map((type) => [type, title])));
+const grouped = new Map(sections.map(([, title]) => [title, []]));
 
 for (const subject of subjects) {
   const match = /^(\w+)(?:\(([^)]+)\))?!?: (.+)$/.exec(subject);
   if (!match) continue;
   const [, type, scope, summary] = match;
-  if (!grouped.has(type)) continue;
-  grouped.get(type).push(scope ? `**${scope}:** ${summary}` : summary);
+  const title = sectionByType.get(type);
+  if (!title) continue;
+  grouped.get(title).push(scope ? `**${scope}:** ${summary}` : summary);
 }
 
 const lines = [];
-for (const [type, title] of sections) {
-  const items = grouped.get(type);
+for (const [, title] of sections) {
+  const items = grouped.get(title);
   if (!items.length) continue;
   lines.push(`### ${title}`, "", ...items.map((item) => `- ${item}`), "");
 }
