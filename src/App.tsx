@@ -3,6 +3,7 @@ import { Archive, ArrowLeft, Clock3, Forward, LayoutTemplate, List, Reply, Reply
 import { save } from "@tauri-apps/plugin-dialog";
 import { isPermissionGranted, requestPermission, sendNotification } from "@tauri-apps/plugin-notification";
 import { info as logInfo, warn as logWarn } from "@tauri-apps/plugin-log";
+import { getVersion } from "@tauri-apps/api/app";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
@@ -81,12 +82,16 @@ function App() {
   const [isSavingDraft, setSavingDraft] = useState(false);
   const [isSending, setSending] = useState(false);
   const [syncMessage, setSyncMessage] = useState("Synchronization pending");
+  const [appVersion, setAppVersion] = useState<string | null>(null);
   const [syncRevision, setSyncRevision] = useState(0);
   const [notificationExclusions, setNotificationExclusions] = useState<NotificationExclusion[]>([]);
   const excludedSenderEmails = useMemo(
     () => new Set(notificationExclusions.map((exclusion) => exclusion.sender.toLowerCase())),
     [notificationExclusions],
   );
+  useEffect(() => {
+    getVersion().then(setAppVersion).catch(() => setAppVersion(null));
+  }, []);
   useEffect(() => {
     const notifiableAccountIds = new Set((accounts ?? []).filter((a) => a.notificationsEnabled).map((a) => a.id));
     listUnifiedInbox().then((inbox) => {
@@ -952,7 +957,7 @@ function App() {
         ) : null}
 
         <footer className="flex h-7 shrink-0 items-center justify-between gap-4 border-t bg-muted/50 px-3 text-xs text-muted-foreground">
-          <div className="flex min-w-0 items-center gap-2 font-medium text-foreground">
+          <div className="flex min-w-0 flex-1 items-center gap-2 font-medium text-foreground">
             <span className={`size-2 shrink-0 rounded-full ${syncProgress ? "bg-primary" : syncMessage.startsWith("Sync failed") ? "bg-red-500" : "bg-emerald-500"}`} />
             <span className="truncate">
               {syncProgress
@@ -983,6 +988,7 @@ function App() {
               </div>
             </div>
           ) : null}
+          {appVersion ? <span className="shrink-0 tabular-nums">v{appVersion}</span> : null}
         </footer>
       </main>
     </TooltipProvider>
