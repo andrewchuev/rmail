@@ -57,7 +57,6 @@ jobs:
         with:
           draft: true
           name: RMail ${{ github.ref_name }}
-          generate_release_notes: true
           files: RMail-*-windows-x64-portable.zip
           fail_on_unmatched_files: true
 
@@ -104,7 +103,6 @@ jobs:
         with:
           draft: true
           name: RMail ${{ github.ref_name }}
-          generate_release_notes: true
           files: RMail-*-macos-universal-portable.zip
           fail_on_unmatched_files: true
 
@@ -160,7 +158,6 @@ jobs:
         with:
           draft: true
           name: RMail ${{ github.ref_name }}
-          generate_release_notes: true
           files: RMail-*-linux-x86_64.AppImage
           fail_on_unmatched_files: true
 
@@ -170,7 +167,18 @@ jobs:
     if: startsWith(github.ref, 'refs/tags/')
     runs-on: ubuntu-22.04
     steps:
-      - name: Publish draft release
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+
+      - name: Build release notes from commit history
+        run: node scripts/release-notes.mjs "${{ github.ref_name }}" > release-notes.md
+
+      - name: Publish release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: gh release edit "${{ github.ref_name }}" --draft=false --repo "${{ github.repository }}"
+        run: gh release edit "${{ github.ref_name }}" --notes-file release-notes.md --draft=false --repo "${{ github.repository }}"
