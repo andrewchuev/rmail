@@ -163,3 +163,14 @@ jobs:
           generate_release_notes: true
           files: RMail-*-linux-x86_64.AppImage
           fail_on_unmatched_files: true
+
+  publish:
+    name: Publish release
+    needs: [windows, macos, linux]
+    if: startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Publish draft release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh release edit "${{ github.ref_name }}" --draft=false --repo "${{ github.repository }}"
