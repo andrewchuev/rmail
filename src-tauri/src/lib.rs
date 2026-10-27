@@ -3,6 +3,7 @@ mod imap_pool;
 mod mail;
 mod settings_transfer;
 mod storage;
+mod update_check;
 
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -373,6 +374,16 @@ async fn import_settings(
         summary.failures.len()
     );
     Ok(summary)
+}
+
+#[tauri::command]
+async fn check_for_update() -> Result<Option<update_check::UpdateInfo>, String> {
+    update_check::check_latest(env!("CARGO_PKG_VERSION")).await
+}
+
+#[tauri::command]
+fn open_release_page(url: String) -> Result<(), String> {
+    update_check::open_release_page(&url)
 }
 
 #[tauri::command]
@@ -880,6 +891,8 @@ pub fn run() {
             save_message_attachment,
             export_settings,
             import_settings,
+            check_for_update,
+            open_release_page,
             send_message,
             test_mail_connection,
             sync_account,

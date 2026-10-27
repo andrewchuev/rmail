@@ -46,6 +46,7 @@ import {
   type NotificationExclusion,
 } from "@/lib/accounts";
 import { applyWindowSettings, loadBackgroundSettings, saveBackgroundSettings, type BackgroundSettings } from "@/lib/settings";
+import { checkForUpdate, openReleasePage, type UpdateInfo } from "@/lib/updates";
 import "./App.css";
 import {
   attachmentFileName,
@@ -83,6 +84,7 @@ function App() {
   const [isSending, setSending] = useState(false);
   const [syncMessage, setSyncMessage] = useState("Synchronization pending");
   const [appVersion, setAppVersion] = useState<string | null>(null);
+  const [availableUpdate, setAvailableUpdate] = useState<UpdateInfo | null>(null);
   const [syncRevision, setSyncRevision] = useState(0);
   const [notificationExclusions, setNotificationExclusions] = useState<NotificationExclusion[]>([]);
   const excludedSenderEmails = useMemo(
@@ -299,6 +301,21 @@ function App() {
     saveBackgroundSettings(backgroundSettings);
     void applyWindowSettings(backgroundSettings).catch(() => undefined);
   }, [backgroundSettings]);
+
+  useEffect(() => {
+    if (!backgroundSettings.checkForUpdates) {
+      setAvailableUpdate(null);
+      return;
+    }
+    const run = () => {
+      checkForUpdate()
+        .then(setAvailableUpdate)
+        .catch((reason) => void logWarn(`update check failed: ${reason instanceof Error ? reason.message : String(reason)}`));
+    };
+    run();
+    const timer = window.setInterval(run, 24 * 60 * 60 * 1000);
+    return () => window.clearInterval(timer);
+  }, [backgroundSettings.checkForUpdates]);
 
   useEffect(() => {
     let unlisten: (() => void) | undefined;
@@ -987,6 +1004,16 @@ function App() {
                 )}
               </div>
             </div>
+          ) : null}
+          {availableUpdate ? (
+            <button
+              className="shrink-0 font-medium text-primary hover:underline"
+              onClick={() => void openReleasePage(availableUpdate.url).catch(() => undefined)}
+              title="Open the release page in your browser"
+              type="button"
+            >
+              Update available: v{availableUpdate.version}
+            </button>
           ) : null}
           {appVersion ? <span className="shrink-0 tabular-nums">v{appVersion}</span> : null}
         </footer>

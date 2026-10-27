@@ -61,7 +61,7 @@ Portable builds and installers are attached to every [release](https://github.co
 - Expandable folder tree per account, with renameable account names.
 - Sanitized HTML message rendering in a sandboxed iframe.
 - Export and import of settings (Settings > Export and import settings): preferences, accounts with their passwords/Gmail tokens, and notification exclusions go into one file encrypted with a password you choose. Importing merges - accounts with an address that already exists are left untouched.
-- Current version shown at the right of the status bar.
+- Current version shown at the right of the status bar, with an "Update available" link when a newer GitHub release exists. The check runs at startup and daily; switch it off in Settings > Check for updates. Nothing is downloaded or installed automatically.
 
 ## Security
 

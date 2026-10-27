@@ -1,6 +1,7 @@
 import { invoke, isTauri } from "@tauri-apps/api/core";
 
 export type BackgroundSettings = {
+  checkForUpdates: boolean;
   enabled: boolean;
   hideOnClose: boolean;
   intervalMinutes: number;
@@ -9,6 +10,7 @@ export type BackgroundSettings = {
 
 const storageKey = "rmail.background-settings";
 const defaults: BackgroundSettings = {
+  checkForUpdates: true,
   enabled: true,
   hideOnClose: true,
   intervalMinutes: 5,

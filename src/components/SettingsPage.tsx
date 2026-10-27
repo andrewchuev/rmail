@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState, type FormEvent } from "react";
-import { AppWindow, Bell, BellOff, ArrowLeft, Clock3, Database, Mail, Plus, Search, X } from "lucide-react";
+import { AppWindow, Bell, BellOff, ArrowLeft, Clock3, Database, Download, Mail, Plus, Search, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
   addNotificationExclusion,
@@ -82,6 +82,12 @@ const generalEntries: SearchEntry[] = [
     title: "Clear message cache",
     description: "Delete all cached mailboxes, messages, and message bodies from this device.",
     keywords: "clear flush database cache reset resync storage disk space wipe",
+  },
+  {
+    id: "check-updates",
+    title: "Check for updates",
+    description: "Look for a newer RMail release on GitHub at startup and once a day.",
+    keywords: "general settings update upgrade new version release github check latest",
   },
   {
     id: "settings-transfer",
@@ -601,6 +607,13 @@ export function SettingsPage({
                   <span className="grid size-10 shrink-0 place-items-center rounded-lg bg-primary/10 text-primary"><AppWindow className="size-5" /></span>
                   <span className="min-w-0 flex-1"><span className="block text-sm font-medium">Launch at system startup</span><span className="mt-1 block text-sm text-muted-foreground">Start RMail automatically when you log in to your computer.</span></span>
                   <input checked={autostartState} onChange={(event) => handleAutostartToggle(event.target.checked)} type="checkbox" />
+                </label>
+              ) : null}
+              {matchedIds.has("check-updates") ? (
+                <label className="flex items-center gap-4 p-5" id="check-updates">
+                  <span className="grid size-10 shrink-0 place-items-center rounded-lg bg-primary/10 text-primary"><Download className="size-5" /></span>
+                  <span className="min-w-0 flex-1"><span className="block text-sm font-medium">Check for updates</span><span className="mt-1 block text-sm text-muted-foreground">Look for a newer RMail release on GitHub at startup and once a day. Only the release page is contacted; nothing is installed automatically.</span></span>
+                  <input checked={backgroundSettings.checkForUpdates} onChange={(event) => onBackgroundSettingsChange({ ...backgroundSettings, checkForUpdates: event.target.checked })} type="checkbox" />
                 </label>
               ) : null}
               {matchedIds.has("settings-transfer") ? <SettingsTransfer /> : null}
