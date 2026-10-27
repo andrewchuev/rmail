@@ -111,16 +111,44 @@ export function buildForwardBody(message: CachedMessage, body: MessageBody): str
  * case-insensitively compared list, dropping any address in `exclude`.
  * Used to build the Cc line for "Reply All".
  */
+// Splits on , or ; only outside quoted display names and <...> so "Doe, John" <j@x> stays intact.
+function splitAddressList(list: string): string[] {
+  const parts: string[] = [];
+  let current = "";
+  let inQuotes = false;
+  let inAngle = false;
+  for (const char of list) {
+    if (char === '"') inQuotes = !inQuotes;
+    else if (!inQuotes && char === "<") inAngle = true;
+    else if (!inQuotes && char === ">") inAngle = false;
+    if (!inQuotes && !inAngle && (char === "," || char === ";")) {
+      parts.push(current);
+      current = "";
+    } else {
+      current += char;
+    }
+  }
+  parts.push(current);
+  return parts;
+}
+
+// Compare by bare address so "Name <a@b>" matches "a@b".
+function bareAddressKey(address: string): string {
+  return (/<([^<>]+)>/.exec(address)?.[1] ?? address).trim().toLowerCase();
+}
+
 export function mergeRecipientLists(lists: (string | null | undefined)[], exclude: string[] = []): string {
-  const excludeSet = new Set(exclude.filter(Boolean).map((address) => address.toLowerCase()));
+  const excludeSet = new Set(
+    exclude.filter(Boolean).flatMap(splitAddressList).map(bareAddressKey).filter(Boolean),
+  );
   const seen = new Set<string>();
   const result: string[] = [];
   for (const list of lists) {
     if (!list) continue;
-    for (const raw of list.split(/[,;]/)) {
+    for (const raw of splitAddressList(list)) {
       const address = raw.trim();
       if (!address) continue;
-      const key = address.toLowerCase();
+      const key = bareAddressKey(address);
       if (excludeSet.has(key) || seen.has(key)) continue;
       seen.add(key);
       result.push(address);
