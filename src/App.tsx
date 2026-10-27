@@ -116,6 +116,8 @@ function App() {
   const [isAddingAccount, setAddingAccount] = useState(false);
   const [isSyncing, setSyncing] = useState(false);
   const [syncingAccountId, setSyncingAccountId] = useState<number | null>(null);
+  // total is null when the number of steps is unknown (single-account sync): the bar is indeterminate.
+  const [syncProgress, setSyncProgress] = useState<{ done: number; total: number | null } | null>(null);
   const [composeAccountId, setComposeAccountId] = useState<number | null>(null);
   const [backgroundSettings, setBackgroundSettings] = useState<BackgroundSettings>(loadBackgroundSettings);
   const [activeView, setActiveView] = useState<"mail" | "settings">("mail");
@@ -676,7 +678,12 @@ function App() {
     syncInProgress.current = true;
     if (!isBackground) setSyncing(true);
     try {
-      const results = await Promise.allSettled(accountList.map((account) => syncAccount(account.id)));
+      setSyncProgress({ done: 0, total: accountList.length });
+      const results = await Promise.allSettled(
+        accountList.map((account) => syncAccount(account.id).finally(() => {
+          setSyncProgress((current) => (current ? { ...current, done: current.done + 1 } : current));
+        })),
+      );
       const successful = results.filter((result) => result.status === "fulfilled");
       const messageCount = successful.reduce(
         (count, result) => count + result.value.messageCount,
@@ -715,6 +722,7 @@ function App() {
       void logWarn(`syncAllAccounts failed: background=${isBackground} reason=${reason instanceof Error ? reason.message : String(reason)}`);
     } finally {
       syncInProgress.current = false;
+      setSyncProgress(null);
       if (!isBackground) setSyncing(false);
     }
   }
@@ -727,6 +735,7 @@ function App() {
     const account = accountList.find((item) => item.id === accountId);
     syncInProgress.current = true;
     setSyncingAccountId(accountId);
+    setSyncProgress({ done: 0, total: null });
     try {
       const status = await syncAccount(accountId);
       startTransition(() => setSyncRevision((current) => current + 1));
@@ -740,6 +749,7 @@ function App() {
     } finally {
       syncInProgress.current = false;
       setSyncingAccountId(null);
+      setSyncProgress(null);
     }
   }
 
@@ -941,12 +951,38 @@ function App() {
           />
         ) : null}
 
-        <footer className="flex h-7 shrink-0 items-center border-t bg-muted/50 px-3 text-xs text-muted-foreground">
-          <div className="flex items-center gap-2 font-medium text-foreground">
-            <span className={`size-2 rounded-full ${syncMessage.startsWith("Sync failed") ? "bg-red-500" : "bg-emerald-500"}`} />
-            {syncMessage.startsWith("Synchronized") ? "Synchronization complete" : syncMessage.startsWith("Sync failed") ? "Synchronization failed" : "Synchronization pending"}
-            {syncMessage !== "Synchronization pending" ? ` - ${syncMessage}` : null}
+        <footer className="flex h-7 shrink-0 items-center justify-between gap-4 border-t bg-muted/50 px-3 text-xs text-muted-foreground">
+          <div className="flex min-w-0 items-center gap-2 font-medium text-foreground">
+            <span className={`size-2 shrink-0 rounded-full ${syncProgress ? "bg-primary" : syncMessage.startsWith("Sync failed") ? "bg-red-500" : "bg-emerald-500"}`} />
+            <span className="truncate">
+              {syncProgress
+                ? "Synchronizing…"
+                : syncMessage.startsWith("Synchronized") ? "Synchronization complete" : syncMessage.startsWith("Sync failed") ? "Synchronization failed" : "Synchronization pending"}
+              {!syncProgress && syncMessage !== "Synchronization pending" ? ` - ${syncMessage}` : null}
+            </span>
           </div>
+          {syncProgress ? (
+            <div className="flex shrink-0 items-center gap-2">
+              {syncProgress.total !== null ? <span className="tabular-nums">{syncProgress.done}/{syncProgress.total}</span> : null}
+              <div
+                aria-label="Synchronization progress"
+                aria-valuemax={syncProgress.total ?? undefined}
+                aria-valuemin={syncProgress.total === null ? undefined : 0}
+                aria-valuenow={syncProgress.total === null ? undefined : syncProgress.done}
+                className="relative h-1.5 w-40 overflow-hidden rounded-full bg-border"
+                role="progressbar"
+              >
+                {syncProgress.total === null ? (
+                  <div className="progress-indeterminate absolute inset-y-0 w-1/3 rounded-full bg-primary" />
+                ) : (
+                  <div
+                    className="h-full rounded-full bg-primary transition-[width] duration-300"
+                    style={{ width: `${syncProgress.total ? (syncProgress.done / syncProgress.total) * 100 : 0}%` }}
+                  />
+                )}
+              </div>
+            </div>
+          ) : null}
         </footer>
       </main>
     </TooltipProvider>

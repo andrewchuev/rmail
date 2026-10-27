@@ -163,3 +163,12 @@
     width: calc(100vw - 2rem);
   }
 }
+
+@keyframes progress-indeterminate {
+  from { left: -33%; }
+  to { left: 100%; }
+}
+
+.progress-indeterminate {
+  animation: progress-indeterminate 1.2s ease-in-out infinite;
+}
