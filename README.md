@@ -1,6 +1,50 @@
+<div align="center">
+
 # RMail
 
-RMail is a lightweight desktop email client built with Rust, Tauri 2, React, and TypeScript.
+**A fast, private desktop mail client for all your inboxes.**
+
+A lightweight desktop email client built with Rust, Tauri 2, React, and TypeScript.<br>
+Many IMAP/SMTP and Gmail accounts, one unified inbox, everything cached locally.
+
+[![Download](https://img.shields.io/github/v/release/andrewchuev/rmail?style=for-the-badge&label=Download&color=blue)](https://github.com/andrewchuev/rmail/releases/latest)
+![Windows | macOS | Linux](https://img.shields.io/badge/Windows%20%7C%20macOS%20%7C%20Linux-portable-0078D4?style=for-the-badge)
+![License](https://img.shields.io/badge/License-MIT-green?style=for-the-badge)
+
+[Download](https://github.com/andrewchuev/rmail/releases/latest) · [Releases](https://github.com/andrewchuev/rmail/releases) · [Report an issue](https://github.com/andrewchuev/rmail/issues)
+
+<br>
+
+<img src="docs/screenshots/main.png" alt="RMail unified inbox" width="760">
+
+</div>
+
+---
+
+## Screenshots
+
+<table>
+  <tr>
+    <td align="center" width="50%">
+      <img src="docs/screenshots/reply-all.png" alt="Reply all"><br>
+      <b>Reply all</b><br>
+      Quoted text, Cc filled in, your own address excluded.
+    </td>
+    <td align="center" width="50%">
+      <img src="docs/screenshots/settings.png" alt="Settings"><br>
+      <b>Settings</b><br>
+      Themes, background checks, tray, notifications, per-account options.
+    </td>
+  </tr>
+</table>
+
+## Download
+
+Portable builds (no installer) are attached to every [release](https://github.com/andrewchuev/rmail/releases/latest):
+
+- **Windows:** `RMail-<version>-windows-x64-portable.zip` - unzip and run `RMail.exe`.
+- **macOS:** `RMail-<version>-macos-universal-portable.zip` - unzip and open `RMail.app` (unsigned: right-click, Open on first launch).
+- **Linux:** `RMail-<version>-linux-x86_64.AppImage` - `chmod +x` and run.
 
 ## Features
 
