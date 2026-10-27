@@ -69,6 +69,7 @@ Pushing a tag matching `v*.*.*` runs `.github/workflows/release.yml`, which buil
 - Drafts cannot be listed or reopened from the UI.
 - Flag and archive are not implemented.
 - Search covers cached sender and subject fields, not full message bodies.
+- Gmail OAuth is capped at 100 Google accounts for the lifetime of the OAuth client (Google's restricted-scope verification + annual CASA security assessment is a paid, recurring cost not justified for a free open-source project). Once the cap is hit, new users should add the account as a regular IMAP/SMTP account using a [Gmail App Password](https://myaccount.google.com/apppasswords) instead - unaffected by the cap.
 
 ## Non-goals
 
