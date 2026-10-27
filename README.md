@@ -8,8 +8,8 @@ A lightweight desktop email client built with Rust, Tauri 2, React, and TypeScri
 Many IMAP/SMTP and Gmail accounts, one unified inbox, everything cached locally.
 
 [![Download](https://img.shields.io/github/v/release/andrewchuev/rmail?style=for-the-badge&label=Download&color=blue)](https://github.com/andrewchuev/rmail/releases/latest)
-![Windows | macOS | Linux](https://img.shields.io/badge/Windows%20%7C%20macOS%20%7C%20Linux-portable-0078D4?style=for-the-badge)
-![License](https://img.shields.io/badge/License-MIT-green?style=for-the-badge)
+[![Windows | macOS | Linux](https://img.shields.io/badge/Windows%20%7C%20macOS%20%7C%20Linux-portable-0078D4?style=for-the-badge)](https://github.com/andrewchuev/rmail/releases/latest)
+[![License](https://img.shields.io/badge/License-MIT-green?style=for-the-badge)](LICENSE)
 
 [Download](https://github.com/andrewchuev/rmail/releases/latest) · [Releases](https://github.com/andrewchuev/rmail/releases) · [Report an issue](https://github.com/andrewchuev/rmail/issues)
 
