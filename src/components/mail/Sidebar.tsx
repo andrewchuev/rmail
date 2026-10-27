@@ -91,7 +91,7 @@ export function Sidebar({
                 </button>
                 <Button
                   aria-label={`Synchronize ${account.displayName}`}
-                  className={`shrink-0 transition-opacity focus-visible:opacity-100 group-hover:opacity-100 ${isAccountSyncing(account.id) ? "opacity-100" : "opacity-0"}`}
+                  className={`shrink-0 transition-opacity focus-visible:opacity-100 group-hover:opacity-100 ${isAccountSyncing(account.id) ? "opacity-100 disabled:opacity-100" : "opacity-0 disabled:opacity-0"}`}
                   disabled={isBusy}
                   onClick={() => onSyncAccount(account.id)}
                   size="icon-sm"
