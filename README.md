@@ -11,7 +11,7 @@ Many IMAP/SMTP and Gmail accounts, one unified inbox, everything cached locally.
 [![Windows | macOS | Linux](https://img.shields.io/badge/Windows%20%7C%20macOS%20%7C%20Linux-portable-0078D4?style=for-the-badge)](https://github.com/andrewchuev/rmail/releases/latest)
 [![License](https://img.shields.io/badge/License-MIT-green?style=for-the-badge)](LICENSE)
 
-[Download](https://github.com/andrewchuev/rmail/releases/latest) · [Releases](https://github.com/andrewchuev/rmail/releases) · [Report an issue](https://github.com/andrewchuev/rmail/issues)
+[Website](https://rmail.reslab.pro) · [Download](https://github.com/andrewchuev/rmail/releases/latest) · [Releases](https://github.com/andrewchuev/rmail/releases) · [Report an issue](https://github.com/andrewchuev/rmail/issues)
 
 <br>
 
@@ -112,6 +112,14 @@ Bumps the patch version across all five files, then runs `tauri build`.
 ### Releases
 
 Pushing a tag matching `v*.*.*` runs `.github/workflows/release.yml`, which builds portable artifacts and installers for Windows, macOS (universal), and Linux (see Download above), attaches them to a draft GitHub Release, and publishes it once all three platform builds succeed. Requires the `RMAIL_GOOGLE_CLIENT_ID`/`RMAIL_GOOGLE_CLIENT_SECRET` repo secrets for Gmail OAuth to work in the built app.
+
+## Website
+
+The project site lives in `landing/` (static HTML, no build step) and is served at <https://rmail.reslab.pro>. Download buttons pick the visitor's OS and point at the latest GitHub release. To publish changes, copy the folder to the server:
+
+```bash
+tar -C landing -cf - . | ssh dev@reslab.pro 'tar -C /opt/sites/rmail.reslab.pro -xf -'
+```
 
 ## Current limitations
 
