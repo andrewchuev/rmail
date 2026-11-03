@@ -5,7 +5,6 @@ import { isPermissionGranted, requestPermission, sendNotification } from "@tauri
 import { info as logInfo, warn as logWarn } from "@tauri-apps/plugin-log";
 import { getVersion } from "@tauri-apps/api/app";
 import { listen } from "@tauri-apps/api/event";
-import { getCurrentWindow } from "@tauri-apps/api/window";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { AccountSetup } from "@/components/AccountSetup";
 import { SettingsPage } from "@/components/SettingsPage";
@@ -316,16 +315,6 @@ function App() {
     const timer = window.setInterval(run, 24 * 60 * 60 * 1000);
     return () => window.clearInterval(timer);
   }, [backgroundSettings.checkForUpdates]);
-
-  useEffect(() => {
-    let unlisten: (() => void) | undefined;
-    void listen("tray-show", () => {
-      void getCurrentWindow().show().then(() => getCurrentWindow().setFocus());
-    }).then((listener) => {
-      unlisten = listener;
-    });
-    return () => unlisten?.();
-  }, []);
 
   useEffect(() => {
     let zoomLevel = parseFloat(localStorage.getItem("ui-zoom-level") ?? "1.0");
