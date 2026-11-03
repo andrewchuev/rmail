@@ -23,8 +23,33 @@ use tauri::{
     menu::{Menu, MenuItem, PredefinedMenuItem},
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
     webview::NewWindowResponse,
-    Emitter, Manager, WebviewUrl, WebviewWindowBuilder, WindowEvent,
+    AppHandle, Emitter, Manager, WebviewUrl, WebviewWindowBuilder, WindowEvent,
 };
+use tauri_plugin_window_state::StateFlags;
+
+/// Passed by the OS autostart entry so the window can stay in the tray on login.
+const AUTOSTART_ARG: &str = "--minimized";
+
+fn show_main_window(app: &AppHandle) {
+    if let Some(window) = app.get_webview_window("main") {
+        let _ = window.unminimize();
+        let _ = window.show();
+        let _ = window.set_focus();
+    }
+}
+
+fn toggle_main_window(app: &AppHandle) {
+    let Some(window) = app.get_webview_window("main") else {
+        return;
+    };
+    // A minimized window still reports visible; treat it as hidden so a click restores it.
+    let shown = window.is_visible().unwrap_or(false) && !window.is_minimized().unwrap_or(false);
+    if shown {
+        let _ = window.hide();
+    } else {
+        show_main_window(app);
+    }
+}
 
 /// URL schemes allowed to be handed off to the OS's default handler when a
 /// link inside an HTML message is clicked. Keeps a malicious message from
@@ -743,13 +768,20 @@ pub fn run() {
     tauri::Builder::default()
         // Must be registered first: it needs to intercept a second launch
         // before any other plugin/window setup runs.
-        .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
-            if let Some(window) = app.get_webview_window("main") {
-                let _ = window.show();
-                let _ = window.set_focus();
+        .plugin(tauri_plugin_single_instance::init(|app, args, _cwd| {
+            // A login-time autostart racing a running instance must not pop the window up.
+            if args.iter().any(|a| a == AUTOSTART_ARG) {
+                return;
             }
+            show_main_window(app);
         }))
-        .plugin(tauri_plugin_window_state::Builder::new().build())
+        // Visibility is decided at startup below, not restored: a window hidden in
+        // the tray when the app quit would otherwise stay invisible on a manual launch.
+        .plugin(
+            tauri_plugin_window_state::Builder::new()
+                .with_state_flags(StateFlags::all() & !StateFlags::VISIBLE)
+                .build(),
+        )
         .plugin(
             tauri_plugin_log::Builder::new()
                 .level(tauri_plugin_log::log::LevelFilter::Info)
@@ -767,7 +799,7 @@ pub fn run() {
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_autostart::init(
             tauri_plugin_autostart::MacosLauncher::LaunchAgent,
-            Some(vec!["--minimized"]),
+            Some(vec![AUTOSTART_ARG]),
         ))
         .setup(|app| {
             // Built programmatically (rather than declared in tauri.conf.json) so
@@ -805,18 +837,14 @@ pub fn run() {
             let window_icon = app.default_window_icon().cloned();
             let mut tray_builder = TrayIconBuilder::with_id("main-tray")
                 .menu(&menu)
+                .show_menu_on_left_click(false)
                 .tooltip("RMail");
             if let Some(icon) = window_icon {
                 tray_builder = tray_builder.icon(icon);
             }
             tray_builder
                 .on_menu_event(|app, event| match event.id.as_ref() {
-                    "open" => {
-                        if let Some(window) = app.get_webview_window("main") {
-                            let _ = window.show();
-                            let _ = window.set_focus();
-                        }
-                    }
+                    "open" => show_main_window(app),
                     "sync" => {
                         let _ = app.emit("tray-sync", ());
                     }
@@ -834,18 +862,21 @@ pub fn run() {
                     _ => {}
                 })
                 .on_tray_icon_event(|tray, event| {
+                    // Fire on button release only; Down would toggle twice per click.
                     if let TrayIconEvent::Click {
                         button: MouseButton::Left,
                         button_state: MouseButtonState::Up,
                         ..
                     } = event
-                        && let Some(window) = tray.app_handle().get_webview_window("main")
                     {
-                        let _ = window.show();
-                        let _ = window.set_focus();
+                        toggle_main_window(tray.app_handle());
                     }
                 })
                 .build(app)?;
+
+            if !std::env::args().any(|a| a == AUTOSTART_ARG) {
+                show_main_window(app.handle());
+            }
             app.manage(AppState {
                 database,
                 imap_pool: ImapSessionPool::new(),
