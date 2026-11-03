@@ -1,0 +1,149 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>RMail — a fast, private desktop mail client</title>
+<meta name="description" content="RMail is a free, open-source desktop email client for Windows, macOS and Linux. All your IMAP and Gmail inboxes in one unified view, cached locally, with a tray icon that shows unread mail.">
+<link rel="canonical" href="https://rmail.reslab.pro/">
+<link rel="icon" type="image/svg+xml" href="assets/icon.svg">
+<link rel="icon" href="favicon.ico" sizes="any">
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="RMail">
+<meta property="og:title" content="RMail — a fast, private desktop mail client">
+<meta property="og:description" content="Free and open source for Windows, macOS and Linux. One unified inbox for every account, cached locally on your machine.">
+<meta property="og:url" content="https://rmail.reslab.pro/">
+<meta property="og:image" content="https://rmail.reslab.pro/assets/shots/main.png">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="theme-color" content="#0b1020">
+<style>
+:root{--bg:#0b1020;--panel:#111830;--line:#1f2947;--text:#f1f5f9;--muted:#a3adc2;--accent:#38bdf8;--accent2:#7dd3fc;--ink:#0b1020;--green:#10b981}
+*{box-sizing:border-box;margin:0;padding:0}
+html{scroll-behavior:smooth}
+body{font-family:Inter,"Segoe UI Variable Text","Segoe UI",system-ui,-apple-system,sans-serif;background:var(--bg);color:var(--text);line-height:1.6;-webkit-font-smoothing:antialiased}
+a{color:inherit;text-decoration:none}
+.wrap{max-width:1120px;margin:0 auto;padding:0 24px}
+nav{position:sticky;top:0;z-index:10;background:rgba(11,16,32,.82);backdrop-filter:blur(12px);border-bottom:1px solid var(--line)}
+nav .wrap{display:flex;align-items:center;justify-content:space-between;height:64px}
+.brand{display:flex;align-items:center;gap:10px;font-weight:650;font-size:18px}
+.brand img{width:30px;height:30px}
+nav .links{display:flex;align-items:center;gap:26px;color:var(--muted);font-size:14.5px}
+nav .links a:hover{color:var(--text)}
+.btn{display:inline-flex;align-items:center;gap:10px;padding:13px 24px;border-radius:12px;font-weight:600;font-size:15.5px;border:1px solid transparent;transition:.15s}
+.btn-primary{background:var(--accent);color:var(--ink);box-shadow:0 8px 30px -8px rgba(56,189,248,.65)}
+.btn-primary:hover{background:var(--accent2);transform:translateY(-1px)}
+.btn-ghost{border-color:var(--line);color:var(--text);background:rgba(255,255,255,.03)}
+.btn-ghost:hover{border-color:#34426b}
+.btn-sm{padding:9px 16px;font-size:14px;border-radius:10px}
+.hero{position:relative;padding:92px 0 40px;text-align:center;overflow:hidden}
+.hero::before{content:"";position:absolute;left:50%;top:-120px;width:900px;height:620px;transform:translateX(-50%);background:radial-gradient(closest-side,rgba(56,189,248,.3),transparent);filter:blur(30px);pointer-events:none}
+.pill{display:inline-flex;gap:8px;align-items:center;padding:6px 14px;border:1px solid var(--line);border-radius:999px;font-size:13px;color:var(--muted);background:rgba(255,255,255,.03)}
+.pill b{color:var(--green);font-weight:600}
+h1{position:relative;font-size:clamp(38px,6vw,68px);line-height:1.07;letter-spacing:-.03em;font-weight:750;margin:22px auto 18px;max-width:880px}
+h1 span{background:linear-gradient(90deg,#bae6fd,#38bdf8 60%,#818cf8);-webkit-background-clip:text;background-clip:text;color:transparent}
+.lead{position:relative;color:var(--muted);font-size:clamp(16px,2vw,19px);max-width:660px;margin:0 auto 32px}
+.cta{position:relative;display:flex;gap:12px;justify-content:center;flex-wrap:wrap}
+.meta{position:relative;margin-top:16px;color:#7886a3;font-size:13px}
+.shot{position:relative;margin:56px auto 0;max-width:1000px;border:1px solid #2a3558;border-radius:16px;background:var(--panel);box-shadow:0 40px 120px -30px rgba(56,189,248,.4),0 0 0 6px rgba(255,255,255,.02)}
+.shot .bar{display:flex;gap:7px;padding:12px 16px;border-bottom:1px solid var(--line)}
+.shot .bar i{width:11px;height:11px;border-radius:50%;background:#2a3558}
+.shot img{display:block;width:100%;height:auto;border-radius:0 0 15px 15px}
+.stats{display:grid;grid-template-columns:repeat(4,1fr);gap:1px;background:var(--line);border:1px solid var(--line);border-radius:16px;overflow:hidden;margin:84px 0}
+.stats div{background:var(--bg);padding:26px 22px;text-align:center}
+.stats b{display:block;font-size:30px;letter-spacing:-.02em}
+.stats span{color:var(--muted);font-size:14px}
+section{padding:36px 0}
+h2{font-size:clamp(28px,4vw,42px);letter-spacing:-.025em;line-height:1.15;text-align:center;font-weight:720}
+.sub{color:var(--muted);text-align:center;max-width:620px;margin:14px auto 44px}
+.grid{display:grid;grid-template-columns:repeat(3,1fr);gap:16px}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:16px;padding:26px;transition:.2s}
+.card:hover{border-color:#34426b;transform:translateY(-2px)}
+.card .ic{width:40px;height:40px;border-radius:11px;background:rgba(56,189,248,.14);color:var(--accent2);display:grid;place-items:center;margin-bottom:16px;font-weight:700}
+.card h3{font-size:17.5px;margin-bottom:6px}
+.card p{color:var(--muted);font-size:15px}
+.duo{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-top:16px}
+.duo figure{border:1px solid var(--line);border-radius:16px;overflow:hidden;background:var(--panel)}
+.duo img{display:block;width:100%;height:auto}
+.duo figcaption{padding:16px 20px;color:var(--muted);font-size:14.5px;border-top:1px solid var(--line)}
+.duo figcaption b{color:var(--text)}
+.dl{display:grid;grid-template-columns:repeat(3,1fr);gap:16px}
+.dl .card{display:flex;flex-direction:column;gap:6px}
+.dl .row{display:flex;gap:8px;flex-wrap:wrap;margin-top:12px}
+html[data-os="windows"] .dl .card.win,html[data-os="mac"] .dl .card.mac,html[data-os="linux"] .dl .card.lin{border-color:var(--accent);box-shadow:0 0 0 1px var(--accent) inset}
+.note{color:#7886a3;font-size:13.5px;text-align:center;max-width:680px;margin:22px auto 0}
+.final{margin:56px 0 30px;text-align:center;padding:64px 24px;border:1px solid var(--line);border-radius:24px;background:radial-gradient(60% 120% at 50% 0,rgba(56,189,248,.22),transparent),var(--panel)}
+.final h2{margin-bottom:12px}
+footer{border-top:1px solid var(--line);margin-top:60px;padding:34px 0;color:#7886a3;font-size:13.5px}
+footer .wrap{display:flex;justify-content:space-between;gap:20px;flex-wrap:wrap}
+footer a:hover{color:var(--text)}
+@media(max-width:860px){.grid,.dl{grid-template-columns:1fr}.duo{grid-template-columns:1fr}.stats{grid-template-columns:1fr 1fr}nav .links a.hide{display:none}.hero{padding-top:60px}}
+</style>
+</head>
+<body>
+<nav><div class="wrap">
+  <a class="brand" href="#"><img src="assets/icon.svg" alt="">RMail</a>
+  <div class="links"><a class="hide" href="#features">Features</a><a class="hide" href="#download">Download</a><a class="hide" href="https://github.com/andrewchuev/rmail">GitHub</a>
+    <a class="btn btn-primary btn-sm" data-dl="primary" href="https://github.com/andrewchuev/rmail/releases/latest">Download</a></div>
+</div></nav>
+
+<header class="hero"><div class="wrap">
+  <span class="pill"><b>Free &amp; open source</b> · Windows, macOS, Linux</span>
+  <h1>All your inboxes. <span>One calm window.</span></h1>
+  <p class="lead">RMail is a fast, private desktop mail client. Bring every IMAP and Gmail account into a single unified inbox, keep it cached on your own machine, and let the tray icon tell you when something new arrives.</p>
+  <div class="cta">
+    <a class="btn btn-primary" data-dl="primary" href="https://github.com/andrewchuev/rmail/releases/latest"><span>Download for <span data-os-name>Windows</span></span></a>
+    <a class="btn btn-ghost" href="https://github.com/andrewchuev/rmail">View on GitHub</a>
+  </div>
+  <p class="meta"><span data-version>v0.1.26</span> · <span data-size="primary">5.5 MB</span> · MIT licensed</p>
+  <div class="shot"><div class="bar"><i></i><i></i><i></i></div><img src="assets/shots/main.png" alt="RMail unified inbox showing messages from three accounts" width="2880" height="1800"></div>
+</div></header>
+
+<main class="wrap">
+  <div class="stats">
+    <div><b>&lt; 6 MB</b><span>Windows installer</span></div>
+    <div><b>Rust</b><span>engine and shell</span></div>
+    <div><b>Local</b><span>cache on your device</span></div>
+    <div><b>MIT</b><span>free forever</span></div>
+  </div>
+
+  <section id="features">
+    <h2>Mail that respects your time.</h2>
+    <p class="sub">A focused client that does the everyday things quickly and keeps your data in your hands.</p>
+    <div class="grid">
+      <div class="card"><div class="ic">01</div><h3>One unified inbox</h3><p>Read messages from every account in a single list, or open an account's own folder tree. Rename accounts to whatever makes sense to you.</p></div>
+      <div class="card"><div class="ic">02</div><h3>IMAP, SMTP and Gmail</h3><p>Connect any standard mail provider with a password, or sign in to Gmail with OAuth 2.0 and PKCE. No app passwords required.</p></div>
+      <div class="card"><div class="ic">03</div><h3>Cached locally</h3><p>Mailboxes, messages, bodies and drafts live in a local SQLite cache, so your mail opens instantly and you can clear it any time.</p></div>
+      <div class="card"><div class="ic">04</div><h3>Tray and notifications</h3><p>Close to the tray, see an unread badge on the icon, and get desktop notifications per account, with a sender mute list for the noisy ones.</p></div>
+      <div class="card"><div class="ic">05</div><h3>Reply the right way</h3><p>Reply, reply all and forward with quoted text and proper threading headers. Reply honors the Reply-To address and skips your own.</p></div>
+      <div class="card"><div class="ic">06</div><h3>Safe by design</h3><p>Passwords and tokens stay in your OS keychain. HTML mail renders sanitized in a sandboxed frame, and links open in your browser.</p></div>
+    </div>
+    <div class="duo">
+      <figure><img src="assets/shots/reply-all.png" alt="Reply all with quoted text" width="2880" height="1800"><figcaption><b>Reply all.</b> Quoted text, Cc filled in, and your own address left out.</figcaption></figure>
+      <figure><img src="assets/shots/settings.png" alt="RMail settings" width="2880" height="1800"><figcaption><b>Make it yours.</b> Themes, background checks, tray, startup and per-account options.</figcaption></figure>
+    </div>
+  </section>
+
+  <section id="download">
+    <h2>Download RMail</h2>
+    <p class="sub">Version <span data-version>v0.1.26</span>. Pick your platform, install or unzip, and you're done.</p>
+    <div class="dl">
+      <div class="card win"><h3>Windows</h3><p>Windows 10 and 11, 64-bit</p><div class="row"><a class="btn btn-primary btn-sm" data-dl="windows" href="https://github.com/andrewchuev/rmail/releases/latest">Installer .exe</a><a class="btn btn-ghost btn-sm" data-dl="portable" href="https://github.com/andrewchuev/rmail/releases/latest">Portable .zip</a></div></div>
+      <div class="card mac"><h3>macOS</h3><p>Universal: Intel and Apple Silicon</p><div class="row"><a class="btn btn-primary btn-sm" data-dl="mac" href="https://github.com/andrewchuev/rmail/releases/latest">Download .dmg</a></div></div>
+      <div class="card lin"><h3>Linux</h3><p>Debian, Ubuntu, Fedora and any distro</p><div class="row"><a class="btn btn-primary btn-sm" data-dl="appimage" href="https://github.com/andrewchuev/rmail/releases/latest">AppImage</a><a class="btn btn-ghost btn-sm" data-dl="deb" href="https://github.com/andrewchuev/rmail/releases/latest">.deb</a><a class="btn btn-ghost btn-sm" data-dl="rpm" href="https://github.com/andrewchuev/rmail/releases/latest">.rpm</a></div></div>
+    </div>
+    <p class="note">Builds are not code-signed yet, so Windows SmartScreen and macOS Gatekeeper warn on first launch. Windows: More info, then Run anyway. macOS: right-click the app, then Open.</p>
+    <div class="final">
+      <h2>Ready when you are</h2>
+      <p class="sub" style="margin-bottom:26px">Open source and free of ads, trackers and accounts.</p>
+      <div class="cta"><a class="btn btn-primary" data-dl="primary" href="https://github.com/andrewchuev/rmail/releases/latest"><span>Download for <span data-os-name>Windows</span></span></a><a class="btn btn-ghost" href="https://github.com/andrewchuev/rmail">Star on GitHub</a></div>
+    </div>
+  </section>
+</main>
+
+<footer><div class="wrap">
+  <span>© 2026 Andrew A. Chuev · MIT License</span>
+  <span><a href="https://github.com/andrewchuev/rmail">GitHub</a> · <a href="https://github.com/andrewchuev/rmail/releases">Releases</a> · <a href="https://github.com/andrewchuev/rmail/issues">Issues</a></span>
+</div></footer>
+<script src="assets/site.js"></script>
+</body>
+</html>
