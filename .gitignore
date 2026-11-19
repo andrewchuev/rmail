@@ -9,6 +9,9 @@ src-tauri/target/
 # IDE settings
 .idea/
 
+# Local QA scratch
+.qa/
+
 # Local application data
 .env
 .env.*
